@@ -7,6 +7,9 @@
 //
 // usage: iss <fw.bin> --org 0x10000000 [--wad file] [--max Minstr] [--icache B] [--dcache B]
 //            [--prof file: pc + ra every 256 instr] [--prof-from F]
+//            [--dump-at F file: after frame F write SRAM + SDRAM (36 MB) with a resume stub at 0x3ff000]
+//            [--resume file: start from such a dump (registers from it, cold caches), fw.bin ignored]
+//            [--frames N: stop after N frames]
 // prints per frame: "F,<frame>,<instr>,<im_sram>,<im_sdram>,<dm_sram>,<dm_sdram>,<st_sram>,<st_sdram>"
 #include <cstdio>
 #include <cstdlib>
@@ -48,6 +51,9 @@ int main(int argc, char **argv) {
     FILE *prof = 0;
     bool sampling = true;
     int prof_from = -1;
+    int dump_at = -1, stop_frames = -1, nframes = 0;
+    const char *dump_path = 0, *resume = 0;
+    bool dump_now = false;
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--max")) max_instr = strtoull(argv[++i], 0, 10) * 1000000ull;
         else if (!strcmp(argv[i], "--icache")) icb = atoi(argv[++i]);
@@ -56,15 +62,28 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--wad")) wad = argv[++i];
         else if (!strcmp(argv[i], "--prof")) prof = fopen(argv[++i], "w");
         else if (!strcmp(argv[i], "--prof-from")) prof_from = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--dump-at")) { dump_at = atoi(argv[++i]); dump_path = argv[++i]; }
+        else if (!strcmp(argv[i], "--resume")) resume = argv[++i];
+        else if (!strcmp(argv[i], "--frames")) stop_frames = atoi(argv[++i]);
     }
     if (prof_from >= 0) sampling = false;
+    if (resume) { org = 0; }
     int reg;
-    FILE *f = fopen(argv[1], "rb");
-    if (!f) { perror(argv[1]); return 2; }
-    size_t n = fread(host(org, reg), 1, 16u << 20, f);
-    fclose(f);
+    size_t n = 0;
     uint32_t wad_size = 0;
-    if (wad) {
+    if (!resume) {
+        FILE *f = fopen(argv[1], "rb");
+        if (!f) { perror(argv[1]); return 2; }
+        n = fread(host(org, reg), 1, 16u << 20, f);
+        fclose(f);
+    } else {
+        FILE *f = fopen(resume, "rb");
+        if (!f) { perror(resume); return 2; }
+        n = fread(sram.data(), 1, SRAM_SIZE, f) + fread(sdram.data(), 1, SDRAM_SIZE, f);
+        fread(&wad_size, 4, 1, f);
+        fclose(f);
+    }
+    if (wad && !resume) {
         FILE *w = fopen(wad, "rb");
         if (!w) { perror(wad); return 2; }
         wad_size = fread(&sdram[0x01000000], 1, 16u << 20, w);
@@ -74,6 +93,8 @@ int main(int argc, char **argv) {
     Cache ic, dc; ic.init(icb); dc.init(dcb);
 
     uint32_t x[32] = {0}, pc = org;
+    const uint32_t RES = 0x3ff000;   // resume area: stub, registers at +0x100, pc at +0x180
+    if (resume) { memcpy(x, &sram[RES + 0x100], 128); x[0] = 0; memcpy(&pc, &sram[RES + 0x180], 4); }
     uint64_t ninstr = 0;
     Cnt tot, last;
     int exit_code = 0;
@@ -114,6 +135,8 @@ int main(int argc, char **argv) {
                        (unsigned long long)(tot.st8[0] - last.st8[0]), (unsigned long long)(tot.st8[1] - last.st8[1]));
                 last = tot;
                 if (prof_from >= 0 && (int)v + 1 >= prof_from) sampling = true;
+                if ((int)v == dump_at) dump_now = true;
+                if (++nframes == stop_frames) done = true;
             }
             else if (o == 0x08) { exit_code = (int)v; done = true; }
             return;
@@ -220,6 +243,30 @@ int main(int argc, char **argv) {
         if (wr && rd) x[rd] = r;
         pc = npc;
         ninstr++;
+        if (dump_now) {
+            // resume stub (as core-pico8): tb_soc --rv 0x3ff000: x31 = base, mepc = pc, mstatus.MPP = M,
+            // load x1..x31, mret
+            auto I = [](int imm, int rs1, int f3, int rd, int op) { return (uint32_t)((imm & 0xfff) << 20 | rs1 << 15 | f3 << 12 | rd << 7 | op); };
+            std::vector<uint32_t> code;
+            code.push_back((0x3ffu << 12) | (31 << 7) | 0x37);   // lui x31, 0x3ff
+            code.push_back(I(0x180, 31, 2, 5, 0x03));             // lw x5, pc
+            code.push_back(I(0x341, 5, 1, 0, 0x73));              // csrw mepc, x5
+            code.push_back((0x2u << 12) | (5 << 7) | 0x37);       // lui x5, 2
+            code.push_back(I(-2048, 5, 0, 5, 0x13));              // addi x5, x5, -2048 (0x1800: MPP = M)
+            code.push_back(I(0x300, 5, 1, 0, 0x73));              // csrw mstatus, x5
+            for (int r = 1; r <= 31; r++) code.push_back(I(0x100 + 4 * r, 31, 2, r, 0x03));
+            code.push_back(0x30200073);                           // mret
+            memcpy(&sram[RES], code.data(), code.size() * 4);
+            for (int r = 0; r < 32; r++) memcpy(&sram[RES + 0x100 + 4 * r], &x[r], 4);
+            memcpy(&sram[RES + 0x180], &pc, 4);
+            FILE *d = fopen(dump_path, "wb");
+            fwrite(sram.data(), 1, SRAM_SIZE, d);
+            fwrite(sdram.data(), 1, SDRAM_SIZE, d);
+            fwrite(&wad_size, 4, 1, d);
+            fclose(d);
+            printf("DUMP %s frame %d pc %08x\n", dump_path, dump_at, pc);
+            done = true;
+        }
     }
     if (!line.empty()) printf("%s\n", line.c_str());
     if (prof) fclose(prof);
