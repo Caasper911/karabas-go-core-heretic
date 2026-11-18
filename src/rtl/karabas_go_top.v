@@ -243,7 +243,7 @@ kg_mcu2 #(
 	.CAPS(16'h0012),     // bit 4: the core drives LD_READY, bit 1: backup RAM (the save file, doom_sd)
 	.ENABLE_OSD(1),
 	.ENABLE_IMG(1),
-	.IMG_OUT_LATENCY(2), // doom_sd: the byte two clocks after SDC_BYTE_ADDR
+	.IMG_OUT_LATENCY(3), // the address register of kg_l2_img + doom_sd (two registers): with 2 every byte went one place later into the file (board)
 	.ENABLE_AUX(1),      // DEBUG_*: the state of the core (AT+KARABAS=debug:1, kg_board.py log)
 	.ENABLE_FT(1),
 	.ENABLE_SD2(1)
