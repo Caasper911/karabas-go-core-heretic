@@ -10,6 +10,10 @@
 //            [--dump-at F file: after frame F write SRAM + SDRAM (36 MB) with a resume stub at 0x11fff000]
 //            [--resume file: start from such a dump (registers from it, cold caches), fw.bin ignored]
 //            [--frames N: stop after N frames]
+//            Ф2: [--music N: MMIO_SW bits 15..8] [--wav file: the SFX ring as played, 11025 Hz stereo]
+//            [--opl-log file: "us reg value" of the OPL writes] [--midi-log file: "us byte"]
+//            Timer: US = instructions / 32 (~ CPI 2.4 at 75 MHz); the timer interrupt and the CSRs
+//            mstatus / mie / mtvec / mepc / mcause / mtval / mip, mret.
 //            [--shot F file.ppm: the frame F (FB 0x3f0000 + palette) as a PPM, repeatable]
 // prints per frame: "F,<frame>,<instr>,<im_sram>,<im_sdram>,<dm_sram>,<dm_sdram>,<st_sram>,<st_sdram>,<st8_sram>,<st8_sdram>,<fb hash>"
 #include <cstdio>
@@ -56,6 +60,13 @@ int main(int argc, char **argv) {
     int dump_at = -1, stop_frames = -1, nframes = 0;
     const char *dump_path = 0, *resume = 0;
     bool dump_now = false;
+    int music = 0;
+    FILE *wavf = 0, *oplf = 0, *midif = 0;
+    uint32_t ring[2048] = {0};
+    uint64_t emitted = 0, wav_n = 0;
+    uint32_t tcmp = 0, opl_addr = 0; bool ten = false;
+    uint32_t mstatus = 0, mie = 0, mtvec = 0, mepc = 0, mcause = 0, mtval = 0;
+    uint64_t n_opl = 0, n_midi = 0, n_irq = 0;
     std::vector<std::pair<int, std::string>> shots;
     uint32_t pal[256] = {0};
     for (int i = 2; i < argc; i++) {
@@ -69,6 +80,10 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--dump-at")) { dump_at = atoi(argv[++i]); dump_path = argv[++i]; }
         else if (!strcmp(argv[i], "--resume")) resume = argv[++i];
         else if (!strcmp(argv[i], "--frames")) stop_frames = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--music")) music = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--wav")) { wavf = fopen(argv[++i], "wb"); fseek(wavf, 44, SEEK_SET); }
+        else if (!strcmp(argv[i], "--opl-log")) oplf = fopen(argv[++i], "w");
+        else if (!strcmp(argv[i], "--midi-log")) midif = fopen(argv[++i], "w");
         else if (!strcmp(argv[i], "--shot")) { int fn = atoi(argv[++i]); shots.push_back({fn, argv[++i]}); }
     }
     if (prof_from >= 0) sampling = false;
@@ -114,7 +129,10 @@ int main(int argc, char **argv) {
         if (a & 0x80000000u) {
             switch (a & 0xff) {
             case 0x0c: return (uint32_t)ninstr;
-            case 0x1c: return (uint32_t)(ninstr / 50000);
+            case 0x1c: return (uint32_t)(ninstr / 32000);
+            case 0x40: return (uint32_t)(ninstr / 32);
+            case 0x50: return (uint32_t)music << 8;
+            case 0x70: return (uint32_t)((ninstr / 32) * 11025 / 1000000) & 2047;
             case 0x20: return wad_size;
             }
             return 0;
@@ -129,9 +147,15 @@ int main(int argc, char **argv) {
     };
     auto st = [&](uint32_t a, uint32_t v, int sz) {
         if (a & 0x80000000u) {
-            uint32_t o = a & 0xfff;
+            uint32_t o = a & 0x3fff;
+            if (o >= 0x2000) { ring[(o - 0x2000) >> 2] = v; return; }
             if (o == 0x00) { char c = (char)v; if (c == '\n') { printf("%s\n", line.c_str()); line.clear(); } else line += c; }
             else if (o >= 0x400 && o < 0x800) pal[(o - 0x400) >> 2] = v;
+            else if (o == 0x44) tcmp = v;
+            else if (o == 0x48) ten = v & 1;
+            else if (o == 0x60) opl_addr = v & 0x1ff;
+            else if (o == 0x64) { n_opl++; if (oplf) fprintf(oplf, "%llu %03x %02x\n", (unsigned long long)(ninstr / 32), opl_addr, v & 0xff); }
+            else if (o == 0x68) { n_midi++; if (midif) fprintf(midif, "%llu %02x\n", (unsigned long long)(ninstr / 32), v & 0xff); }
             else if (o == 0x04) {
                 // FNV-1a of the frame + palette: the oracle for the RTL (same value from tb_soc)
                 uint32_t h = 2166136261u;
@@ -167,6 +191,13 @@ int main(int argc, char **argv) {
     };
 
     while (!done && ninstr < max_instr) {
+        if ((ninstr & 255) == 0) {
+            uint64_t us = ninstr / 32;
+            if (wavf) { uint64_t play = us * 11025 / 1000000; while (emitted < play) { fwrite(&ring[emitted & 2047], 4, 1, wavf); emitted++; wav_n++; } }
+            if (ten && (mstatus & 8) && (mie & 0x80) && (int32_t)((uint32_t)us - tcmp) >= 0) {
+                mepc = pc; mcause = 0x80000007u; mstatus = (mstatus & ~0x88u) | ((mstatus & 8) << 4); pc = mtvec & ~3u; n_irq++;
+            }
+        }
         if (prof && sampling && (ninstr & 255) == 0) fprintf(prof, "%x %x\n", pc, x[1]);
         uint8_t *ip = host(pc, reg);
         if (!ip) bad("fetch from", pc);
@@ -253,7 +284,19 @@ int main(int argc, char **argv) {
             }
             break;
         case 0x0f: wr = false; break; // fence
-        case 0x73: wr = (rd != 0); r = 0; break; // csr reads as 0, ecall/ebreak ignored
+        case 0x73: {
+            if (in == 0x30200073u) { // mret
+                pc = mepc; npc = mepc; mstatus = (mstatus & ~0x8u) | ((mstatus >> 4) & 8) | 0x80; wr = false; break;
+            }
+            uint32_t csr = in >> 20, *cp = 0;
+            switch (csr) { case 0x300: cp = &mstatus; break; case 0x304: cp = &mie; break; case 0x305: cp = &mtvec; break;
+                           case 0x341: cp = &mepc; break; case 0x342: cp = &mcause; break; case 0x343: cp = &mtval; break; }
+            uint32_t old = cp ? *cp : (csr == 0x344 ? ((ten && (int32_t)((uint32_t)(ninstr / 32) - tcmp) >= 0) ? 0x80u : 0u) : 0u);
+            uint32_t src = (f3 & 4) ? rs1 : a;
+            if (cp) { if ((f3 & 3) == 1) *cp = src; else if ((f3 & 3) == 2) *cp |= src; else if ((f3 & 3) == 3) *cp &= ~src; }
+            r = old; wr = (rd != 0) && f3 != 0;
+            break;
+        }
         default:
             fprintf(stderr, "illegal %08x at %08x after %llu\n", in, pc, (unsigned long long)ninstr);
             return 3;
@@ -289,6 +332,19 @@ int main(int argc, char **argv) {
     }
     if (!line.empty()) printf("%s\n", line.c_str());
     if (prof) fclose(prof);
+    printf("SOUND irqs %llu opl writes %llu midi bytes %llu wav samples %llu\n", (unsigned long long)n_irq,
+           (unsigned long long)n_opl, (unsigned long long)n_midi, (unsigned long long)wav_n);
+    if (wavf) {
+        uint32_t data = (uint32_t)(wav_n * 4), rate = 11025, br = rate * 4, sz = 36 + data, fmt = 16;
+        uint16_t pcm = 1, chn = 2, ba = 4, bits = 16;
+        fseek(wavf, 0, SEEK_SET);
+        fwrite("RIFF", 1, 4, wavf); fwrite(&sz, 4, 1, wavf); fwrite("WAVEfmt ", 1, 8, wavf); fwrite(&fmt, 4, 1, wavf);
+        fwrite(&pcm, 2, 1, wavf); fwrite(&chn, 2, 1, wavf); fwrite(&rate, 4, 1, wavf); fwrite(&br, 4, 1, wavf);
+        fwrite(&ba, 2, 1, wavf); fwrite(&bits, 2, 1, wavf); fwrite("data", 1, 4, wavf); fwrite(&data, 4, 1, wavf);
+        fclose(wavf);
+    }
+    if (oplf) fclose(oplf);
+    if (midif) fclose(midif);
     tot.instr = ninstr;
     printf("END pc %08x ra %08x misaligned %llu\n", pc, x[1], (unsigned long long)misaligned);
     printf("END instr %llu exit %d%s im %llu/%llu dm %llu/%llu st %llu/%llu (sram/sdram)\n", (unsigned long long)ninstr, exit_code, done ? "" : " (max)",
