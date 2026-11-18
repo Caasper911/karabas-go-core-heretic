@@ -173,7 +173,7 @@ static void poll_input(void) {
 static uint32_t frame;
 
 void DG_Init(void) {}
-void DG_DrawFrame(void) { MMIO_FRAME = frame++; }
+void DG_DrawFrame(void) { MMIO_FRAME = frame++; if ((frame & 63) == 0) kg_save_show(); /* the state of the saves in DEBUG_ADDR */ }
 void DG_SleepMs(uint32_t ms) { uint32_t t = MMIO_MS; while (MMIO_MS - t < ms) {} }
 uint32_t DG_GetTicksMs(void) { return MMIO_MS; }
 void DG_SetWindowTitle(const char *title) { (void)title; }
@@ -219,5 +219,6 @@ int main(void) {
     wait_wad();
     kg_save_init();
     doomgeneric_Create(n, av);
+    kg_save_show();
     for (;;) doomgeneric_Tick();
 }

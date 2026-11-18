@@ -29,13 +29,17 @@ static const char MAGIC[8] = "KGDOOMS1";
 static int ready;
 static uint32_t table[SLOTS];
 static int wait_idle(void);
+/* debug: the last console byte (DEBUG_ADDR low byte of the board) says the state of the saves */
+static char last_st = '?';
+static void st(char c) { last_st = c; MMIO_UART = (uint8_t) c; }
+void kg_save_show(void) { MMIO_UART = (uint8_t) last_st; }
 
 /* a sector takes a few ms; no answer in 500 ms or an error: the save file is given up for this run
    (the game goes on with the RAM files, a message in the log) */
 static int wait_idle(void) {
     uint32_t t0 = MMIO_MS;
-    while (SD_STAT & 1) if (MMIO_MS - t0 > 500) { printf("Saves: SD timeout, off\n"); ready = 0; return 0; }
-    if (SD_STAT & 2) { printf("Saves: SD error, off\n"); ready = 0; return 0; }
+    while (SD_STAT & 1) if (MMIO_MS - t0 > 500) { printf("Saves: SD timeout, off\n"); ready = 0; st('T'); return 0; }
+    if (SD_STAT & 2) { printf("Saves: SD error, off\n"); ready = 0; st('E'); return 0; }
     return 1;
 }
 
@@ -82,15 +86,15 @@ void kg_save_init(void) {
        WAD closes it first (size 0), so the request comes only when nothing is mounted */
     if (!(SD_STAT & 4)) SD_BKREQ = FILE_SECTORS;
     uint32_t t0 = MMIO_MS;
-    while (!(SD_STAT & 4)) if (MMIO_MS - t0 > 2500) { printf("Saves: no save file\n"); return; }
-    if (SD_SIZE < FILE_SECTORS * 512u) { printf("Saves: the save file is too small\n"); return; }
+    while (!(SD_STAT & 4)) if (MMIO_MS - t0 > 2500) { printf("Saves: no save file\n"); st('N'); return; }
+    if (SD_SIZE < FILE_SECTORS * 512u) { printf("Saves: the save file is too small\n"); st('S'); return; }
     uint8_t b[512];
     ready = 1;
     if (!sec_read(0, b)) { printf("Saves: read error\n"); ready = 0; return; }
     if (memcmp(b, MAGIC, 8)) {
         /* only a new file (sector 0 all zeros) gets an empty table: anything else (a bad read, a
            file of something else) is left as it is and the saves stay off */
-        for (int i = 0; i < 512; i++) if (b[i]) { printf("Saves: the save file is not ours, off\n"); ready = 0; return; }
+        for (int i = 0; i < 512; i++) if (b[i]) { printf("Saves: the save file is not ours, off\n"); ready = 0; st('X'); return; }
         memset(table, 0, sizeof table);
         if (!table_write()) { printf("Saves: write error\n"); ready = 0; return; }
     } else
@@ -98,6 +102,7 @@ void kg_save_init(void) {
     for (int i = 0; i < SLOTS; i++) if (table[i] > slot_max(i)) table[i] = 0;
     ready = 1;
     printf("Saves: on the SD card\n");
+    st('R');
 }
 
 int kg_save_kept(const char *name) { return ready && slot_of(name) >= 0; }
@@ -135,7 +140,9 @@ int kg_save_store(const char *name, const uint8_t *data, uint32_t size) {
         if (!sec_write(start + off / 512, b)) { printf("Saves: write error\n"); return 0; }
     }
     table[s] = size;
-    return table_write();
+    int ok = table_write();
+    st(ok ? 'K' : 'w');
+    return ok;
 }
 
 void kg_save_remove(const char *name) {
