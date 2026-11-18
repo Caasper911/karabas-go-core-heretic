@@ -285,7 +285,7 @@ wire [15:0] vid_wd, frame_n;
 wire [7:0] pal_wa, dbg_uart;
 wire [23:0] pal_wd;
 wire [8:0] dbg_exit;
-wire [7:0] dbg_state, dbg_tcmp_n;
+wire [7:0] dbg_state, dbg_tcmp_n, sd_dbg;
 wire aud_we;
 wire [13:0] aud_off;
 wire [31:0] aud_wd, aud_rd, aud_rd_audio, aud_rd_sd;
@@ -318,7 +318,8 @@ doom_sd #(.SLOT(3'd1)) sd (
 	.sdc_sector(sdc_sector), .sdc_busy(sdc_busy), .sdc_done(sdc_done), .sdc_error(sdc_error), .sdc_slot(sdc_slot),
 	.sdc_byte_in_strobe(sdc_byte_in_strobe), .sdc_byte_addr(sdc_byte_addr), .sdc_byte_in_data(sdc_byte_in_data),
 	.sdc_byte_out_data(sdc_byte_out_data), .img_flush(img_flush),
-	.bk_mount(bk_mount), .bk_flushed(bk_flushed), .bk_size(bk_size), .bk_kind(bk_kind), .bk_result(bk_result)
+	.bk_mount(bk_mount), .bk_flushed(bk_flushed), .bk_size(bk_size), .bk_kind(bk_kind), .bk_result(bk_result),
+	.dbg(sd_dbg)
 );
 
 // ------------------------------------------------------------------ video
@@ -431,8 +432,9 @@ hdmi_tx #(.SAMPLE_FREQ(48000)) hdmi (
 // DEBUG_ADDR: { cpu_run, exit seen, 6'd0, the last console byte }, or (sw_dbg = Menu+... none: by
 // time) every other second { dbg_state, timer interrupts (TCMP writes) };
 // DEBUG_DATA: { frames drawn in the last second, frames drawn (low 8 bits) }
+// (Ф3: the low byte of the second one is the state of doom_sd instead of the interrupt count)
 reg dbg_alt = 1'b0;
-assign dbg_addr = dbg_alt ? { dbg_state, dbg_tcmp_n } : { cpu_run, dbg_exit[8], 6'd0, dbg_uart };
+assign dbg_addr = dbg_alt ? { dbg_state, sd_dbg } : { cpu_run, dbg_exit[8], 6'd0, dbg_uart };
 reg [26:0] sec_cnt = 27'd0;
 reg [15:0] frame_sec = 16'd0;
 reg [7:0] fps = 8'd0;
