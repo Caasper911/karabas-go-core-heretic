@@ -70,17 +70,47 @@ $(B)/$(NAME).elf: $(OBJ) kg_main.c syscalls.c crt0.S mmio.h $(B)/link-$(LAYOUT).
 $(B)/$(NAME).bin: $(B)/$(NAME).elf
 	$(CROSS)objcopy -O binary $< $@
 
-# the board firmware (roms/doom.bin of the .kg): kg_hw.c + crt0_hw.S, LAYOUT sdram, FB direct
-hw: $(B)/doom-hw.bin
-.PHONY: $(B)/doom-hw.elf
-$(B)/doom-hw.elf: $(OBJ) kg_hw.c font8.h syscalls.c crt0_hw.S mmio.h $(B)/link-$(LAYOUT).ld
-	$(CROSS)gcc $(CFLAGS) '-DHWARGS="$(HWARGS)"' -c kg_hw.c -o $(B)/kg_hw.o
-	$(CROSS)gcc $(CFLAGS) -c syscalls.c -o $(B)/syscalls.o
-	$(CROSS)gcc $(ABI) -c crt0_hw.S -o $(B)/crt0_hw.o
-	$(CROSS)gcc $(LDFLAGS) -T $(B)/link-$(LAYOUT).ld -Wl,-Map,$(B)/doom-hw.map -o $@ \
-	  $(B)/crt0_hw.o $(OBJ) $(B)/kg_hw.o $(B)/syscalls.o -lm
+# the board firmware (roms/doom.bin of the .kg): kg_hw.c + crt0_hw.S, LAYOUT sdram, FB direct, and
+# the sound (Ф2: FEATURE_SOUND, i_kgsound.c / i_kgmusic.c, the OPL music of chocolate-doom 2.3.0 with
+# opl_kg.c and compat/): its own build dir build-hw-$(ARCH)$(OPT)/
+CHOC    := ../../upstream/chocolate-doom
+BH      := build-hw-$(ARCH)$(subst -,,$(OPT))
+HWDEFS  := $(DEFS) -DFEATURE_SOUND
+HWCFLAGS := -march=$(ARCH)_zicsr -mabi=ilp32 $(OPT) -std=gnu11 -g -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -ffunction-sections -fdata-sections -w $(HWDEFS) -I. -I$(DG) -Icompat -I$(CHOC)/opl -I$(CHOC)/src
+HWOBJ   := $(addprefix $(BH)/,$(addsuffix .o,$(filter-out i_video,$(DOOM)))) $(BH)/w_file_kg.o $(BH)/i_video_direct.o \
+           $(BH)/opl.o $(BH)/opl_queue.o $(BH)/i_oplmusic.o $(BH)/midifile.o $(BH)/mus2mid.o $(BH)/sdl_compat.o \
+           $(BH)/kg_irq.o $(BH)/opl_kg.o $(BH)/i_kgsound.o $(BH)/i_kgmusic.o $(BH)/trap.o
+$(BH):
+	mkdir -p $@
+$(BH)/%.o: $(DG)/%.c | $(BH)
+	$(CROSS)gcc $(HWCFLAGS) -c $< -o $@
+$(BH)/%.o: $(CHOC)/opl/%.c | $(BH)
+	$(CROSS)gcc $(HWCFLAGS) -c $< -o $@
+# copies in the build dir: their quoted includes then find the doomgeneric headers first (the
+# chocolate-doom ones of the same names differ), midifile.h from $(CHOC)/src
+$(BH)/choc_%.c: $(CHOC)/src/%.c | $(BH)
+	cp $< $@
+$(BH)/i_oplmusic.o $(BH)/midifile.o: $(BH)/%.o: $(BH)/choc_%.c compat/kg_choc_sound.h compat/SDL.h
+	$(CROSS)gcc $(HWCFLAGS) -include compat/kg_choc_sound.h -include compat/SDL.h -c $< -o $@
+$(BH)/sdl_compat.o: compat/sdl_compat.c compat/SDL.h | $(BH)
+	$(CROSS)gcc $(HWCFLAGS) -c $< -o $@
+$(BH)/i_video_direct.o: $(B)/i_video_direct.c mmio.h | $(BH)
+	$(CROSS)gcc $(HWCFLAGS) -c $< -o $@
+$(BH)/w_file_kg.o $(BH)/kg_irq.o $(BH)/opl_kg.o $(BH)/i_kgsound.o $(BH)/i_kgmusic.o: $(BH)/%.o: %.c mmio.h kg_irq.h | $(BH)
+	$(CROSS)gcc $(HWCFLAGS) -c $< -o $@
+$(BH)/trap.o: trap.S | $(BH)
+	$(CROSS)gcc -march=$(ARCH)_zicsr -mabi=ilp32 -c $< -o $@
+
+hw: $(BH)/doom-hw.bin
+.PHONY: $(BH)/doom-hw.elf
+$(BH)/doom-hw.elf: $(HWOBJ) kg_hw.c font8.h syscalls.c crt0_hw.S mmio.h $(B)/link-$(LAYOUT).ld
+	$(CROSS)gcc $(HWCFLAGS) '-DHWARGS="$(HWARGS)"' -c kg_hw.c -o $(BH)/kg_hw.o
+	$(CROSS)gcc $(HWCFLAGS) -c syscalls.c -o $(BH)/syscalls.o
+	$(CROSS)gcc $(ABI) -c crt0_hw.S -o $(BH)/crt0_hw.o
+	$(CROSS)gcc $(LDFLAGS) -Wl,--wrap=realloc -T $(B)/link-$(LAYOUT).ld -Wl,-Map,$(BH)/doom-hw.map -o $@ \
+	  $(BH)/crt0_hw.o $(HWOBJ) $(BH)/kg_hw.o $(BH)/syscalls.o -lm
 	$(CROSS)size $@
-$(B)/doom-hw.bin: $(B)/doom-hw.elf
+$(BH)/doom-hw.bin: $(BH)/doom-hw.elf
 	$(CROSS)objcopy -O binary $< $@
 
 clean:

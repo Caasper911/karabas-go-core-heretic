@@ -33,10 +33,25 @@
             "type": "-"
         },
         {
+            "type": "S",
+            "name": "Music",
+            "options": [
+                "OPL3",
+                "MIDI",
+                "Off"
+            ],
+            "default": 1,
+            "hotkey": "Menu+M",
+            "index": 1
+        },
+        {
+            "type": "-"
+        },
+        {
             "type": "T",
             "name": "Reset",
             "hotkey": "F12",
-            "index": 1
+            "index": 2
         }
     ]
 }

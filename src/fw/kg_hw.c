@@ -13,6 +13,7 @@
 #include "d_event.h"
 #include "mmio.h"
 #include "font8.h"
+#include "kg_irq.h"
 
 #define MMIO_KBD0  MMIO_REG(0x28)   /* key3 key2 key1 modifiers */
 #define MMIO_KBD1  MMIO_REG(0x2c)   /* 0 key6 key5 key4 */
@@ -213,6 +214,7 @@ int main(void) {
         while (*s && *s != ' ') s++;
     }
     av[n] = 0;
+    kg_irq_init();
     wait_wad();
     doomgeneric_Create(n, av);
     for (;;) doomgeneric_Tick();
