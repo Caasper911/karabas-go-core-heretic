@@ -254,7 +254,8 @@ reg [31:0] io_dat = 32'd0;
 wire [13:0] io_off14 = { d_adr[11:0], 2'b00 };
 wire [11:0] io_off = io_off14[11:0];
 wire io_low = io_off14[13:12] == 2'b00;   // 0x0000..0x0fff: the registers here and the palette
-wire aud_sel = (io_off14[13] || io_off14[11:4] == 8'h06 || io_off14[11:4] == 8'h07) && io_off14[11:10] == 2'b00;
+// doom_audio: the SFX ring 0x2000..0x3ffc (all of it) and the registers 0x60..0x7c
+wire aud_sel = io_off14[13] || (io_off14[13:12] == 2'b00 && (io_off14[11:4] == 8'h06 || io_off14[11:4] == 8'h07));
 assign aud_we = d_req && d_io && !io_ack && !cpu_reset && d_we && aud_sel;
 assign aud_off = io_off14;
 assign aud_wd = d_dat_o;
