@@ -342,6 +342,9 @@ always @(posedge clk) begin
 				8'h48: ten <= d_dat_o[0];
 				default: ;
 			endcase
+		end else if (aud_sel) begin
+			// the registers of the top (the sector buffer 0x1000.. too): not by the low byte below
+			io_dat <= aud_rd;
 		end else begin
 			case (io_off[7:0])
 				8'h0c: io_dat <= cycles;
