@@ -24,11 +24,29 @@ void *_sbrk(ptrdiff_t incr) {
 }
 
 #define WAD_FD 3
+#define RAM_FD0 4
+#define RAM_FILES 8
 static uint32_t wad_pos;
 
+/* the WAD: any name ending in .wad (read only, in memory at WAD_BASE) */
 int kg_is_wad(const char *name) {
     size_t n = strlen(name);
     return n > 4 && !strcasecmp(name + n - 4, ".wad") && MMIO_WADSIZE != 0;
+}
+
+/* Ф2: files in RAM (lost at a reset): the MIDI of a song (i_oplmusic.c writes doom.mid and reads
+   it back), default.cfg, savegames. One open handle per file. */
+#include <stdlib.h>
+#include <fcntl.h>
+typedef struct { char name[64]; uint8_t *data; uint32_t size, cap, pos; int used, open; } ramfile_t;
+static ramfile_t rf[RAM_FILES];
+
+static ramfile_t *rf_find(const char *name) {
+    for (int i = 0; i < RAM_FILES; i++) if (rf[i].used && !strcmp(rf[i].name, name)) return &rf[i];
+    return 0;
+}
+static ramfile_t *rf_fd(int fd) {
+    return (fd >= RAM_FD0 && fd < RAM_FD0 + RAM_FILES && rf[fd - RAM_FD0].used && rf[fd - RAM_FD0].open) ? &rf[fd - RAM_FD0] : 0;
 }
 
 /* the board build (kg_hw.c) keeps a log of the console and draws it at exit */
@@ -36,6 +54,21 @@ void kg_log_putc(char c) __attribute__((weak));
 void kg_exit_screen(int code) __attribute__((weak));
 
 int _write(int fd, const char *buf, int len) {
+    ramfile_t *f = rf_fd(fd);
+    if (f) {
+        if (f->pos + len > f->cap) {
+            uint32_t cap = f->cap ? f->cap : 4096;
+            while (cap < f->pos + len) cap *= 2;
+            uint8_t *d = realloc(f->data, cap);
+            if (!d) { errno = ENOSPC; return -1; }
+            f->data = d;
+            f->cap = cap;
+        }
+        memcpy(f->data + f->pos, buf, len);
+        f->pos += len;
+        if (f->pos > f->size) f->size = f->pos;
+        return len;
+    }
     if (fd != 1 && fd != 2) { errno = EBADF; return -1; }
     for (int i = 0; i < len; i++) {
         MMIO_UART = (uint8_t)buf[i];
@@ -44,6 +77,14 @@ int _write(int fd, const char *buf, int len) {
     return len;
 }
 int _read(int fd, char *buf, int len) {
+    ramfile_t *f = rf_fd(fd);
+    if (f) {
+        if (f->pos >= f->size) return 0;
+        if ((uint32_t) len > f->size - f->pos) len = (int) (f->size - f->pos);
+        memcpy(buf, f->data + f->pos, len);
+        f->pos += len;
+        return len;
+    }
     if (fd != WAD_FD) return 0;
     uint32_t sz = MMIO_WADSIZE;
     if (wad_pos >= sz) return 0;
@@ -54,34 +95,77 @@ int _read(int fd, char *buf, int len) {
 }
 int _open(const char *name, int flags, int mode) {
     (void)mode;
-    if ((flags & 3) == 0 && kg_is_wad(name)) { wad_pos = 0; return WAD_FD; }
-    errno = ENOENT;
-    return -1;
+    if ((flags & 3) == O_RDONLY && kg_is_wad(name)) { wad_pos = 0; return WAD_FD; }
+    ramfile_t *f = rf_find(name);
+    if ((flags & 3) == O_RDONLY) {
+        if (!f || f->open) { errno = ENOENT; return -1; }
+    } else {
+        if (!f) {
+            for (int i = 0; i < RAM_FILES && !f; i++) if (!rf[i].used) f = &rf[i];
+            if (!f || strlen(name) >= sizeof f->name) { errno = ENOSPC; return -1; }
+            memset(f, 0, sizeof *f);
+            strcpy(f->name, name);
+            f->used = 1;
+        }
+        if (f->open) { errno = EBUSY; return -1; }
+        if (flags & O_TRUNC) f->size = 0;
+    }
+    f->open = 1;
+    f->pos = (flags & O_APPEND) ? f->size : 0;
+    return RAM_FD0 + (int) (f - rf);
 }
-int _close(int fd) { return fd == WAD_FD ? 0 : -1; }
+int _close(int fd) {
+    ramfile_t *f = rf_fd(fd);
+    if (f) { f->open = 0; return 0; }
+    return fd == WAD_FD ? 0 : -1;
+}
 int _fstat(int fd, struct stat *st) {
     memset(st, 0, sizeof *st);
-    if (fd == WAD_FD) { st->st_mode = S_IFREG; st->st_size = MMIO_WADSIZE; }
+    ramfile_t *f = rf_fd(fd);
+    if (f) { st->st_mode = S_IFREG; st->st_size = f->size; }
+    else if (fd == WAD_FD) { st->st_mode = S_IFREG; st->st_size = MMIO_WADSIZE; }
     else st->st_mode = S_IFCHR;
     return 0;
 }
-int _isatty(int fd) { return fd != WAD_FD; }
+int _isatty(int fd) { return fd < WAD_FD; }
 int _lseek(int fd, int off, int whence) {
+    ramfile_t *f = rf_fd(fd);
+    if (f) {
+        uint32_t base = whence == 0 ? 0 : whence == 1 ? f->pos : f->size;
+        f->pos = base + off;
+        return (int) f->pos;
+    }
     if (fd != WAD_FD) return 0;
     uint32_t base = whence == 0 ? 0 : whence == 1 ? wad_pos : MMIO_WADSIZE;
     wad_pos = base + off;
     return (int)wad_pos;
 }
-int _unlink(const char *name) { (void)name; errno = ENOENT; return -1; }
+int _unlink(const char *name) {
+    ramfile_t *f = rf_find(name);
+    if (!f) { errno = ENOENT; return -1; }
+    free(f->data);
+    memset(f, 0, sizeof *f);
+    return 0;
+}
 int _link(const char *a, const char *b) { (void)a; (void)b; errno = EMLINK; return -1; }
 int _stat(const char *name, struct stat *st) {
     memset(st, 0, sizeof *st);
     if (kg_is_wad(name)) { st->st_mode = S_IFREG; st->st_size = MMIO_WADSIZE; return 0; }
+    ramfile_t *f = rf_find(name);
+    if (f) { st->st_mode = S_IFREG; st->st_size = f->size; return 0; }
     errno = ENOENT;
     return -1;
 }
-int _mkdir(const char *name, int mode) { (void)name; (void)mode; errno = ENOENT; return -1; }
-int mkdir(const char *name, mode_t mode) { (void)name; (void)mode; errno = ENOENT; return -1; }
+int _rename(const char *a, const char *b) {
+    ramfile_t *f = rf_find(a);
+    if (!f || strlen(b) >= sizeof f->name) { errno = ENOENT; return -1; }
+    _unlink(b);
+    strcpy(f->name, b);
+    return 0;
+}
+int rename(const char *a, const char *b) { return _rename(a, b); }
+int _mkdir(const char *name, int mode) { (void)name; (void)mode; return 0; }
+int mkdir(const char *name, mode_t mode) { (void)name; (void)mode; return 0; }
 int _getpid(void) { return 1; }
 int _kill(int pid, int sig) { (void)pid; (void)sig; errno = EINVAL; return -1; }
 clock_t _times(struct tms *t) { (void)t; return (clock_t)MMIO_MS; }

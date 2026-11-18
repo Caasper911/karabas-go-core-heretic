@@ -20,6 +20,11 @@
      2c R  KBD1: { 0, key 6, key 5, key 4 }            30 R  KBDN: reports seen (a counter)
      34 R  MOUSE: see below, reading clears the sums
      38 R  JOY: { joy_r, joy_l }
+     40 R  US: microseconds since reset (low 32)
+     44 W  TCMP: the timer interrupt (VexRiscv timerInterrupt, level) is on while TEN and US - TCMP >= 0
+     48 W  TEN: bit 0
+     50 R  SW: the OSD switches (kg_mcu2 SW, item 2 = Music in bits 15..8)
+     60..70, 2000..3ffc: doom_audio (OPL3, MIDI, the SFX ring)
      400..7fc W  PAL: palette entry ((a - 400) / 4) = 0x00RRGGBB
    MOUSE: bits 31..24 buttons, 23..12 dy sum, 11..0 dx sum (signed 12 bit, saturated; reading clears).
  Instruction fetch: the SDRAM only (the program). The I and D buses share the SDRAM (D first), the
@@ -59,6 +64,13 @@ module doom_soc #(
 	input wire ms_wr,
 	input wire [15:0] joy_l,
 	input wire [15:0] joy_r,
+	input wire [31:0] sw,
+
+	// doom_audio registers
+	output wire aud_we,
+	output wire [13:0] aud_off,
+	output wire [31:0] aud_wd,
+	input wire [31:0] aud_rd,
 
 	// video: the SRAM read port and the palette writes
 	input wire vid_req,
@@ -128,7 +140,7 @@ reg i_ack, d_ack;
 
 VexRiscv cpu (
 	.externalResetVector(RESET_VECTOR),
-	.timerInterrupt(1'b0),
+	.timerInterrupt(timer_irq),
 	.softwareInterrupt(1'b0),
 	.externalInterruptArray(32'd0),
 	.iBusWishbone_CYC(i_cyc),
@@ -157,6 +169,7 @@ VexRiscv cpu (
 	.reset(cpu_reset)
 );
 
+reg timer_irq = 1'b0;
 wire d_req = d_cyc & d_stb;
 wire i_req = i_cyc & i_stb;
 wire d_io = d_adr[29];                      // 0x80000000
@@ -238,7 +251,16 @@ reg signed [11:0] ms_dx = 12'sd0, ms_dy = 12'sd0;
 reg [7:0] ms_btn = 8'd0;
 reg io_ack = 1'b0;
 reg [31:0] io_dat = 32'd0;
-wire [11:0] io_off = { d_adr[9:0], 2'b00 };
+wire [13:0] io_off14 = { d_adr[11:0], 2'b00 };
+wire [11:0] io_off = io_off14[11:0];
+wire io_low = io_off14[13:12] == 2'b00;   // 0x0000..0x0fff: the registers here and the palette
+wire aud_sel = (io_off14[13] || io_off14[11:4] == 8'h06 || io_off14[11:4] == 8'h07) && io_off14[11:10] == 2'b00;
+assign aud_we = d_req && d_io && !io_ack && !cpu_reset && d_we && aud_sel;
+assign aud_off = io_off14;
+assign aud_wd = d_dat_o;
+reg [31:0] us = 32'd0, tcmp = 32'd0;
+reg [6:0] us_div = 7'd0;
+reg ten = 1'b0;
 
 always @(posedge clk) begin
 	dma_req <= 1'b0;
@@ -251,7 +273,7 @@ always @(posedge clk) begin
 		copy_pend <= 1'b0;
 		disp_front <= ~disp_front;
 	end
-	if (d_req && d_io && !io_ack && !cpu_reset && d_we && io_off == 12'h004) copy_pend <= 1'b1;
+	if (d_req && d_io && !io_ack && !cpu_reset && d_we && io_off14 == 14'h0004) copy_pend <= 1'b1;
 end
 
 
@@ -266,6 +288,16 @@ endfunction
 always @(posedge clk) begin
 	io_ack <= 1'b0;
 	pal_we <= 1'b0;
+	timer_irq <= ten && !cpu_reset && $signed(us - tcmp) >= 0;
+	if (cpu_reset) begin
+		us <= 32'd0;
+		us_div <= 7'd0;
+		ten <= 1'b0;
+	end else if (us_div == 7'd74) begin
+		us_div <= 7'd0;
+		us <= us + 32'd1;
+	end else
+		us_div <= us_div + 7'd1;
 	if (cpu_reset) begin
 		cycles <= 32'd0;
 		ms <= 32'd0;
@@ -285,7 +317,9 @@ always @(posedge clk) begin
 	if (d_req && d_io && !io_ack && !cpu_reset) begin
 		io_ack <= 1'b1;
 		if (d_we) begin
-			if (io_off[11:10] == 2'b01) begin   // 0x400..0x7fc
+			if (!io_low || aud_sel) begin
+				// doom_audio (aud_we)
+			end else if (io_off[11:10] == 2'b01) begin   // 0x400..0x7fc
 				pal_we <= 1'b1;
 				pal_wa <= io_off[9:2];
 				pal_wd <= d_dat_o[23:0];
@@ -293,6 +327,8 @@ always @(posedge clk) begin
 				8'h00: dbg_uart <= d_dat_o[7:0];
 				8'h04: frame_n <= frame_n + 16'd1;
 				8'h08: dbg_exit <= { 1'b1, d_dat_o[7:0] };
+				8'h44: tcmp <= d_dat_o;
+				8'h48: ten <= d_dat_o[0];
 				default: ;
 			endcase
 		end else begin
@@ -314,7 +350,9 @@ always @(posedge clk) begin
 					end
 				end
 				8'h38: io_dat <= { joy_r, joy_l };
-				default: io_dat <= 32'd0;
+				8'h40: io_dat <= us;
+				8'h50: io_dat <= sw;
+				default: io_dat <= aud_sel ? aud_rd : 32'd0;
 			endcase
 		end
 	end

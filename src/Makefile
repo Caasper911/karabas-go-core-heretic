@@ -35,7 +35,7 @@ prj_src = $(shell sed -n 's/^[a-z]* work "\(.*\)"/\1/p' $(1) 2>/dev/null)
 
 rom:
 	$(MAKE) -C fw hw
-	cp fw/build-rv32imO2/doom-hw.bin roms/doom.bin
+	cp fw/build-hw-rv32imO2/doom-hw.bin roms/doom.bin
 
 define board
 SRC_$(1) := $$(call prj_src,karabas_$(1).prj)
