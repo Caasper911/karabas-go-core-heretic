@@ -11,10 +11,13 @@
 
  Memory: the program (the ROM of the .kg) and the WAD (FL item 0) in the SDRAM, the frame in the SRAM.
  Video: doom_video (320 x 200 doubled in the middle of 640 x 480, syncs and de always), the OSD of
- link v2 over it, HDMI (audio silent until Ф2). Syncs negative.
+ link v2 over it, HDMI. Syncs negative.
+ Audio: doom_audio (the SFX ring mixed by the CPU, OPL3, MIDI_TX to the SAM2695 and its sound back by
+ the PCM1808 ADC) on clk_pix: the PCM5102 and HDMI (48 kHz).
 
  Soft switches (the index of the item in the osd of core.json):
-   0 WAD (the FL item: its index is taken, no value)   1 Reset
+   0 WAD (the FL item: its index is taken, no value)   1 Music (OPL3 / MIDI / Off, read by the CPU)
+   2 Reset
 */
 
 module karabas_minig_top (
@@ -116,10 +119,6 @@ assign UART_RX = 1'bz;
 assign UART_TX = 1'bz;
 assign UART_CTS = 1'bz;
 
-assign ADC_CLK = 1'b0;
-assign ADC_BCK = 1'bz;
-assign ADC_LRCK = 1'bz;
-assign MIDI_TX = 1'b1;
 assign TAPE_OUT = 1'b0;
 
 // FLASH_CS_N (T3) is the SDRAM /CS of Mini G2 (rev G: tied low on the board): always selected
@@ -185,7 +184,7 @@ wire [1:0] ld_kind;
 wire [7:0] ld_slot, ld_data;
 wire [31:0] ld_addr;
 wire ld_start, ld_active, ld_end, ld_wr, ld_ready;
-wire [8*2-1:0] sw;
+wire [8*3-1:0] sw;
 wire dvi_only;
 wire ft_cs_n, ft_mosi, ft_spi_on, sd2_cs_n, sd2_mosi;
 wire [15:0] dbg_addr;
@@ -200,7 +199,7 @@ wire [3:0] osd_py;
 wire [5:0] osd_pw;
 
 kg_mcu2 #(
-	.SW_N(2),
+	.SW_N(3),
 	.CS_FILTER(3),
 	.CAPS(16'h0010),     // bit 4: the core drives LD_READY
 	.ENABLE_OSD(1),
@@ -258,7 +257,7 @@ assign SD_CS_N = sd2_cs_n;
 assign SD_DI = sd2_mosi;
 assign SD_CLK = mcu_sck_ibufg;
 
-wire sw_reset = sw[1*8];
+wire sw_reset = sw[2*8];
 
 // ------------------------------------------------------------------ the SoC
 
@@ -278,6 +277,9 @@ wire [15:0] vid_wd, frame_n;
 wire [7:0] pal_wa, dbg_uart;
 wire [23:0] pal_wd;
 wire [8:0] dbg_exit;
+wire aud_we;
+wire [13:0] aud_off;
+wire [31:0] aud_wd, aud_rd;
 
 doom_soc soc (
 	.clk(clk_sys),
@@ -285,6 +287,7 @@ doom_soc soc (
 	.ld_kind(ld_kind), .ld_slot(ld_slot), .ld_start(ld_start), .ld_active(ld_active), .ld_end(ld_end),
 	.ld_addr(ld_addr), .ld_data(ld_data), .ld_wr(ld_wr), .ld_ready(ld_ready),
 	.kbd(kbd), .kbd_wr(kbd_wr), .ms_x(ms_x), .ms_y(ms_y), .ms_b(ms_b), .ms_wr(ms_wr), .joy_l(joy_l), .joy_r(joy_r),
+	.sw({ 8'd0, sw }), .aud_we(aud_we), .aud_off(aud_off), .aud_wd(aud_wd), .aud_rd(aud_rd),
 	.vid_req(vid_req), .vid_adr(vid_adr), .vid_len(vid_len), .vid_we(vid_we), .vid_wa(vid_wa), .vid_wd(vid_wd),
 	.vid_busy(vid_busy), .pal_we(pal_we), .pal_wa(pal_wa), .pal_wd(pal_wd), .frame_n(frame_n),
 	.disp_front(disp_front), .disp_shown(disp_shown),
@@ -319,13 +322,31 @@ kg_l2_osd_overlay osd (
 	.rgb_o(osd_rgb), .hs_o(osd_hs), .vs_o(osd_vs), .de_o(osd_de)
 );
 
-// ------------------------------------------------------------------ audio (silent until Ф2)
+// ------------------------------------------------------------------ audio
 
-kg_pcm5102 #(.DIV_BITS(3)) dac (
+wire signed [15:0] snd_l, snd_r;
+doom_audio audio (
 	.clk(clk_sys),
 	.reset(areset),
-	.left(16'd0),
-	.right(16'd0),
+	.io_we(aud_we), .io_off(aud_off), .io_wd(aud_wd), .io_rd(aud_rd),
+	.midi_tx(MIDI_TX),
+	.clk_a(clk_pix),
+	.adc_clk_en(),
+	.adc_bck(ADC_BCK),
+	.adc_lrck(ADC_LRCK),
+	.adc_dout(ADC_DOUT),
+	.adc_gain(3'd4),
+	.snd_l(snd_l),
+	.snd_r(snd_r)
+);
+// the PCM1808 master clock: 25 MHz = 256 fs
+ODDR2 oddr_adc_clk (.Q(ADC_CLK), .C0(clk_pix), .C1(~clk_pix), .CE(1'b1), .D0(1'b1), .D1(1'b0), .R(1'b0), .S(1'b0));
+
+kg_pcm5102 #(.DIV_BITS(2)) dac (  // bck 3.1 MHz
+	.clk(clk_pix),
+	.reset(areset_pix),
+	.left(snd_l),
+	.right(snd_r),
 	.din(DAC_DAT),
 	.bck(DAC_BCK),
 	.lrck(DAC_WS)
@@ -334,11 +355,14 @@ kg_pcm5102 #(.DIV_BITS(3)) dac (
 // 48 kHz for hdmi_tx on clk_pix: + 6 per clock of 25 MHz, modulo 3125 (exact)
 reg [11:0] aud_acc = 12'd0;
 reg aud_stb = 1'b0;
+reg [23:0] hdmi_l = 24'd0, hdmi_r = 24'd0;
 always @(posedge clk_pix) begin
 	aud_stb <= 1'b0;
 	if (aud_acc >= 12'd3119) begin
 		aud_acc <= aud_acc + 12'd6 - 12'd3125;
 		aud_stb <= 1'b1;
+		hdmi_l <= { snd_l, 8'd0 };
+		hdmi_r <= { snd_r, 8'd0 };
 	end else
 		aud_acc <= aud_acc + 12'd6;
 end
@@ -369,8 +393,8 @@ hdmi_tx #(.SAMPLE_FREQ(48000)) hdmi (
 	.hsync(hdmi_hs),
 	.de(hdmi_de),
 	.audio_en(~dvi_only_p),
-	.audio_l(24'd0),
-	.audio_r(24'd0),
+	.audio_l(hdmi_l),
+	.audio_r(hdmi_r),
 	.audio_clk(aud_stb),
 	.tx_clk_n(TMDS_N[3]),
 	.tx_clk_p(TMDS_P[3]),

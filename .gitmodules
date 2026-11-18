@@ -4,3 +4,6 @@
 [submodule "modules"]
 	path = modules
 	url = https://github.com/andykarpov/karabas-go-modules
+[submodule "upstream/chocolate-doom"]
+	path = upstream/chocolate-doom
+	url = https://github.com/chocolate-doom/chocolate-doom
