@@ -11,6 +11,7 @@ LAYOUT  ?= sdram
 FB      ?= direct
 MB      ?= 6
 ARGS    ?= -timedemo demo1
+HWARGS  ?=
 NAME    := doom-$(FB)-$(LAYOUT)-$(MB)
 
 DG      := ../../upstream/doomgeneric/doomgeneric
@@ -34,7 +35,7 @@ ORG := 0x00000000
 LEN := 0x3f0000
 else
 ORG := 0x10000000
-LEN := 0x1000000
+LEN := 0x0c00000
 endif
 
 vpath %.c $(DG)
@@ -69,6 +70,19 @@ $(B)/$(NAME).elf: $(OBJ) kg_main.c syscalls.c crt0.S mmio.h $(B)/link-$(LAYOUT).
 $(B)/$(NAME).bin: $(B)/$(NAME).elf
 	$(CROSS)objcopy -O binary $< $@
 
+# the board firmware (roms/doom.bin of the .kg): kg_hw.c + crt0_hw.S, LAYOUT sdram, FB direct
+hw: $(B)/doom-hw.bin
+.PHONY: $(B)/doom-hw.elf
+$(B)/doom-hw.elf: $(OBJ) kg_hw.c font8.h syscalls.c crt0_hw.S mmio.h $(B)/link-$(LAYOUT).ld
+	$(CROSS)gcc $(CFLAGS) '-DHWARGS="$(HWARGS)"' -c kg_hw.c -o $(B)/kg_hw.o
+	$(CROSS)gcc $(CFLAGS) -c syscalls.c -o $(B)/syscalls.o
+	$(CROSS)gcc $(ABI) -c crt0_hw.S -o $(B)/crt0_hw.o
+	$(CROSS)gcc $(LDFLAGS) -T $(B)/link-$(LAYOUT).ld -Wl,-Map,$(B)/doom-hw.map -o $@ \
+	  $(B)/crt0_hw.o $(OBJ) $(B)/kg_hw.o $(B)/syscalls.o -lm
+	$(CROSS)size $@
+$(B)/doom-hw.bin: $(B)/doom-hw.elf
+	$(CROSS)objcopy -O binary $< $@
+
 clean:
 	rm -rf build-*
-.PHONY: all clean
+.PHONY: all clean hw
