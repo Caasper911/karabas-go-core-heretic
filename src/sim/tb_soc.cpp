@@ -1,5 +1,5 @@
 // Ф0.4 Verilator testbench (from core-pico8 tb_soc.cpp): a VexRiscv variant on C++ models of the
-// board memories, started from an iss --dump-at image (reset vector 0x3ff000 = resume stub).
+// board memories, started from an iss --dump-at image (reset vector 0x11fff000 = resume stub).
 //
 // Memories (separate buses, the I and D buses of the CPU share each one, data first):
 //   SRAM  4 MB at 0x00000000, async 2M x16: word read = --sr-rd cycles, write = --sr-wr per halfword
@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
 
     Verilated::commandArgs(argc, argv);
     Vcpu *top = new Vcpu;
-    top->externalResetVector = 0x3ff000;
+    top->externalResetVector = 0x11fff000;
     top->timerInterrupt = 0;
     top->softwareInterrupt = 0;
     top->externalInterruptArray = 0;
