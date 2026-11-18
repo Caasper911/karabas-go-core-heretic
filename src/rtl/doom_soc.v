@@ -91,6 +91,8 @@ module doom_soc #(
 	output reg [7:0] dbg_uart = 8'd0,
 	output reg [8:0] dbg_exit = 9'd0,
 	output wire cpu_run,
+	output wire [7:0] dbg_state,          // { copy_pend, copy_run, dma_busy, disp_front, disp_shown, timer_irq, ten, 0 }
+	output reg [7:0] dbg_tcmp_n = 8'd0,   // TCMP writes (one per timer interrupt)
 
 	// SDRAM pins (the top makes the tristate)
 	output wire [12:0] sdr_a,
@@ -171,6 +173,7 @@ VexRiscv cpu (
 
 reg timer_irq = 1'b0;
 wire d_req = d_cyc & d_stb;
+wire copy_pend_w, copy_run_w, dma_busy_w;
 wire i_req = i_cyc & i_stb;
 wire d_io = d_adr[29];                      // 0x80000000
 wire d_sd = ~d_io & d_adr[26];              // 0x10000000
@@ -230,6 +233,10 @@ localparam [20:0] FB_WORK = 21'h1f8000, FB_DISP0 = 21'h1f0000, FB_DISP1 = 21'h1e
 reg copy_pend = 1'b0, copy_run = 1'b0, dma_req = 1'b0;
 wire dma_busy;
 wire sr_ok = ~cpu_reset & ~copy_pend;
+assign copy_pend_w = copy_pend;
+assign copy_run_w = copy_run;
+assign dma_busy_w = dma_busy;
+assign dbg_state = { copy_pend_w, copy_run_w, dma_busy_w, disp_front, disp_shown, timer_irq, ten, 1'b0 };
 doom_sram sram (
 	.clk(clk),
 	.wb_cyc(d_req & d_sr & sr_ok), .wb_stb(d_req & d_sr & sr_ok), .wb_we(d_we), .wb_sel(d_sel),
@@ -328,7 +335,7 @@ always @(posedge clk) begin
 				8'h00: dbg_uart <= d_dat_o[7:0];
 				8'h04: frame_n <= frame_n + 16'd1;
 				8'h08: dbg_exit <= { 1'b1, d_dat_o[7:0] };
-				8'h44: tcmp <= d_dat_o;
+				8'h44: begin tcmp <= d_dat_o; dbg_tcmp_n <= dbg_tcmp_n + 8'd1; end
 				8'h48: ten <= d_dat_o[0];
 				default: ;
 			endcase
