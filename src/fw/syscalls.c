@@ -181,3 +181,21 @@ void _exit(int code) {
     MMIO_EXIT = (uint32_t)code;
     for (;;) {}
 }
+
+/* Ф2: realloc with room to grow. chocolate-doom midifile.c grows the event array of a track by one
+   event per realloc; the realloc of newlib-nano always allocates anew and copies, so a song of a
+   few thousand events took minutes (quadratic: "New Game" hung at the level music). Linked with
+   -Wl,--wrap=realloc: a block that is big enough is kept, a new one gets 1.5x. */
+#include <malloc.h>
+void *__wrap_realloc(void *p, size_t n) {
+    if (!p) return malloc(n);
+    if (n == 0) { free(p); return 0; }
+    size_t have = malloc_usable_size(p);
+    if (n <= have) return p;
+    void *q = malloc(n + n / 2);
+    if (!q) q = malloc(n);
+    if (!q) return 0;
+    memcpy(q, p, have);
+    free(p);
+    return q;
+}

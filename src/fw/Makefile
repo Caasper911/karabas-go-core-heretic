@@ -107,7 +107,7 @@ $(BH)/doom-hw.elf: $(HWOBJ) kg_hw.c font8.h syscalls.c crt0_hw.S mmio.h $(B)/lin
 	$(CROSS)gcc $(HWCFLAGS) '-DHWARGS="$(HWARGS)"' -c kg_hw.c -o $(BH)/kg_hw.o
 	$(CROSS)gcc $(HWCFLAGS) -c syscalls.c -o $(BH)/syscalls.o
 	$(CROSS)gcc $(ABI) -c crt0_hw.S -o $(BH)/crt0_hw.o
-	$(CROSS)gcc $(LDFLAGS) -T $(B)/link-$(LAYOUT).ld -Wl,-Map,$(BH)/doom-hw.map -o $@ \
+	$(CROSS)gcc $(LDFLAGS) -Wl,--wrap=realloc -T $(B)/link-$(LAYOUT).ld -Wl,-Map,$(BH)/doom-hw.map -o $@ \
 	  $(BH)/crt0_hw.o $(HWOBJ) $(BH)/kg_hw.o $(BH)/syscalls.o -lm
 	$(CROSS)size $@
 $(BH)/doom-hw.bin: $(BH)/doom-hw.elf
