@@ -199,11 +199,14 @@ static void wait_wad(void) {
 }
 
 int main(void) {
-    static char args[] = "doom -iwad game.wad -mb 8";
-    static char *av[8];
+#ifndef HWARGS
+#define HWARGS ""
+#endif
+    static char args[] = "doom -iwad game.wad -mb 8 " HWARGS;
+    static char *av[16];
     int n = 0;
     char *s = args;
-    while (*s && n < 7) {
+    while (*s && n < 15) {
         while (*s == ' ') *s++ = 0;
         if (!*s) break;
         av[n++] = s;

@@ -271,7 +271,7 @@ generate
 	end
 endgenerate
 
-wire vid_req, vid_we, vid_busy, pal_we, cpu_run;
+wire vid_req, vid_we, vid_busy, pal_we, cpu_run, disp_front, disp_shown;
 wire [20:0] vid_adr;
 wire [8:0] vid_len, vid_wa;
 wire [15:0] vid_wd, frame_n;
@@ -287,6 +287,7 @@ doom_soc soc (
 	.kbd(kbd), .kbd_wr(kbd_wr), .ms_x(ms_x), .ms_y(ms_y), .ms_b(ms_b), .ms_wr(ms_wr), .joy_l(joy_l), .joy_r(joy_r),
 	.vid_req(vid_req), .vid_adr(vid_adr), .vid_len(vid_len), .vid_we(vid_we), .vid_wa(vid_wa), .vid_wd(vid_wd),
 	.vid_busy(vid_busy), .pal_we(pal_we), .pal_wa(pal_wa), .pal_wd(pal_wd), .frame_n(frame_n),
+	.disp_front(disp_front), .disp_shown(disp_shown),
 	.dbg_uart(dbg_uart), .dbg_exit(dbg_exit), .cpu_run(cpu_run),
 	.sdr_a(SDR_A), .sdr_ba(SDR_BA), .sdr_dq_i(SDR_DQ), .sdr_dq_o(sdr_dq_o), .sdr_dq_oe_n(sdr_dq_oe_n),
 	.sdr_dqm(SDR_DQM), .sdr_ras_n(SDR_RAS_N), .sdr_cas_n(SDR_CAS_N), .sdr_we_n(SDR_WE_N),
@@ -301,6 +302,7 @@ doom_video video (
 	.clk_sys(clk_sys),
 	.vid_req(vid_req), .vid_adr(vid_adr), .vid_len(vid_len), .vid_we(vid_we), .vid_wa(vid_wa), .vid_wd(vid_wd),
 	.pal_we(pal_we), .pal_wa(pal_wa), .pal_wd(pal_wd), .show(cpu_run),
+	.disp_front(disp_front), .disp_shown(disp_shown),
 	.clk_pix(clk_pix), .rgb(vid_rgb), .hs(vid_hs), .vs(vid_vs), .de(vid_de)
 );
 
@@ -378,9 +380,20 @@ hdmi_tx #(.SAMPLE_FREQ(48000)) hdmi (
 
 // ------------------------------------------------------------------ debug
 
-// DEBUG_ADDR: { cpu_run, exit seen, 6'd0, the last console byte }; DEBUG_DATA: frames drawn
+// DEBUG_ADDR: { cpu_run, exit seen, 6'd0, the last console byte };
+// DEBUG_DATA: { frames drawn in the last second, frames drawn (low 8 bits) }
 assign dbg_addr = { cpu_run, dbg_exit[8], 6'd0, dbg_uart };
-always @(posedge clk_sys)
-	dbg_data <= frame_n;
+reg [26:0] sec_cnt = 27'd0;
+reg [15:0] frame_sec = 16'd0;
+reg [7:0] fps = 8'd0;
+always @(posedge clk_sys) begin
+	if (sec_cnt == 27'd74_999_999) begin
+		sec_cnt <= 27'd0;
+		fps <= frame_n - frame_sec;
+		frame_sec <= frame_n;
+	end else
+		sec_cnt <= sec_cnt + 27'd1;
+	dbg_data <= { fps, frame_n[7:0] };
+end
 
 endmodule

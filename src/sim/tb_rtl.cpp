@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     t->ld_addr = 0; t->ld_data = 0; t->ld_wr = 0;
     t->kbd = 0; t->kbd_wr = 0; t->ms_x = 0; t->ms_y = 0; t->ms_b = 0; t->ms_wr = 0; t->joy_l = 0; t->joy_r = 0;
     t->vid_req = 0; t->vid_adr = 0; t->vid_len = 0;
-    t->sdr_dq_i = 0; t->MD_I = 0;
+    t->sdr_dq_i = 0; t->MD_I = 0; t->disp_shown = 0;
 
     // SDRAM model state
     bool open[4] = {false, false, false, false};
@@ -62,6 +62,9 @@ int main(int argc, char **argv) {
     uint32_t prev_ma = 0;
     uint32_t pal[256] = {0};
     uint16_t last_frame = 0;
+    std::vector<uint8_t> work_copy(64000);
+    bool last_front = false;
+    int copies = 0, copy_bad = 0;
     int nframes = 0;
     uint64_t cyc = 0, last_cyc = 0;
     std::string line;
@@ -126,6 +129,7 @@ int main(int argc, char **argv) {
         { uint16_t v; memcpy(&v, &sram[prev_ma * 2], 2); t->MD_I = v; }
         prev_ma = ma;
 
+        t->disp_shown = t->disp_front;   // the video flips at once
         if (t->pal_we) pal[t->pal_wa] = t->pal_wd;
         if (t->dbg_uart != last_uart) { last_uart = t->dbg_uart; }
         if (t->frame_n != last_frame) {
@@ -133,15 +137,23 @@ int main(int argc, char **argv) {
             uint32_t h = 2166136261u;
             for (int i = 0; i < 64000; i++) h = (h ^ sram[0x3f0000 + i]) * 16777619u;
             for (int i = 0; i < 256; i++) h = (h ^ pal[i]) * 16777619u;
+            memcpy(work_copy.data(), &sram[0x3f0000], 64000);
             printf("F,%d,%llu,%08x\n", nframes, (unsigned long long)(cyc - last_cyc), h);
             fflush(stdout);
             last_cyc = cyc;
             if (++nframes == stop_frames) done = true;
         }
+        if ((bool)t->disp_front != last_front) {
+            // a copy is done: the buffer it went to must hold the frame of the FRAME write
+            last_front = t->disp_front;
+            uint32_t dst = last_front ? 0x3d0000 : 0x3e0000;
+            copies++;
+            if (memcmp(&sram[dst], work_copy.data(), 64000)) { if (copy_bad++ < 5) fprintf(stderr, "DMA copy %d differs\n", copies); }
+        }
         if (t->dbg_exit & 0x100) { printf("EXIT %d\n", t->dbg_exit & 0xff); done = true; }
     }
-    printf("END cycles %llu frames %d sdram errors %d\n", (unsigned long long)cyc, nframes, errors);
+    printf("END cycles %llu frames %d sdram errors %d dma copies %d bad %d\n", (unsigned long long)cyc, nframes, errors, copies, copy_bad);
     t->final();
     delete t;
-    return errors ? 1 : 0;
+    return (errors || copy_bad) ? 1 : 0;
 }
