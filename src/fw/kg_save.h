@@ -8,3 +8,4 @@ int kg_save_size(const char *name);          /* its size, -1: not in the save fi
 int kg_save_load(const char *name, uint8_t *out, uint32_t cap);
 int kg_save_store(const char *name, const uint8_t *data, uint32_t size);
 void kg_save_remove(const char *name);
+void kg_save_show(void);                     /* debug: the state code again as the last console byte */
