@@ -12,6 +12,8 @@
 //            [--frames N: stop after N frames]
 //            Ф2: [--music N: MMIO_SW bits 15..8] [--wav file: the SFX ring as played, 11025 Hz stereo]
 //            [--opl-log file: "us reg value" of the OPL writes] [--midi-log file: "us byte"]
+//            Ф3: [--sd file: the 1 MB save file of doom_sd (made if absent)] [--keys F:U,F:U...: at frame F the
+//            USB key U is down (0: all up)]
 //            Timer: US = instructions / 32 (~ CPI 2.4 at 75 MHz); the timer interrupt and the CSRs
 //            mstatus / mie / mtvec / mepc / mcause / mtval / mip, mret.
 //            [--shot F file.ppm: the frame F (FB 0x3f0000 + palette) as a PPM, repeatable]
@@ -67,6 +69,12 @@ int main(int argc, char **argv) {
     uint32_t tcmp = 0, opl_addr = 0; bool ten = false;
     uint32_t mstatus = 0, mie = 0, mtvec = 0, mepc = 0, mcause = 0, mtval = 0;
     uint64_t n_opl = 0, n_midi = 0, n_irq = 0;
+    const char *sd_path = 0;
+    std::vector<uint8_t> sdf;
+    uint8_t sdbuf[512] = {0};
+    uint32_t sd_sector = 0, kbd0 = 0, kbdn = 0;
+    bool sd_mounted = false;
+    std::vector<std::pair<int, int>> keys;
     std::vector<std::pair<int, std::string>> shots;
     uint32_t pal[256] = {0};
     for (int i = 2; i < argc; i++) {
@@ -81,6 +89,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--resume")) resume = argv[++i];
         else if (!strcmp(argv[i], "--frames")) stop_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--music")) music = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--sd")) sd_path = argv[++i];
+        else if (!strcmp(argv[i], "--keys")) {
+            char *k = argv[++i];
+            while (*k) { int f = strtol(k, &k, 10); if (*k == ':') k++; int u = strtol(k, &k, 0); keys.push_back({f, u}); if (*k == ',') k++; }
+        }
         else if (!strcmp(argv[i], "--wav")) { wavf = fopen(argv[++i], "wb"); fseek(wavf, 44, SEEK_SET); }
         else if (!strcmp(argv[i], "--opl-log")) oplf = fopen(argv[++i], "w");
         else if (!strcmp(argv[i], "--midi-log")) midif = fopen(argv[++i], "w");
@@ -110,6 +123,10 @@ int main(int argc, char **argv) {
         fclose(w);
     }
     fprintf(stderr, "loaded %zu bytes at %08x, WAD %u bytes, I$ %u D$ %u\n", n, org, wad_size, icb, dcb);
+    if (sd_path) {
+        sdf.assign(1u << 20, 0);
+        if (FILE *q = fopen(sd_path, "rb")) { size_t r = fread(sdf.data(), 1, sdf.size(), q); (void)r; fclose(q); }
+    }
     Cache ic, dc; ic.init(icb); dc.init(dcb);
 
     uint32_t x[32] = {0}, pc = org;
@@ -127,12 +144,18 @@ int main(int argc, char **argv) {
     };
     auto ld = [&](uint32_t a, int sz) -> uint32_t {
         if (a & 0x80000000u) {
+            if ((a & 0x3fff) >= 0x1000 && (a & 0x3fff) < 0x1800) return sdbuf[((a & 0x3fff) - 0x1000) >> 2];
+            if ((a & 0x3fff) >= 0x100) return 0;
             switch (a & 0xff) {
             case 0x0c: return (uint32_t)ninstr;
             case 0x1c: return (uint32_t)(ninstr / 32000);
             case 0x40: return (uint32_t)(ninstr / 32);
             case 0x50: return (uint32_t)music << 8;
             case 0x70: return (uint32_t)((ninstr / 32) * 11025 / 1000000) & 2047;
+            case 0x28: return kbd0;
+            case 0x30: return kbdn;
+            case 0x88: return sd_mounted ? 4u : 0u;
+            case 0x8c: return sd_mounted ? (uint32_t)sdf.size() : 0u;
             case 0x20: return wad_size;
             }
             return 0;
@@ -149,6 +172,14 @@ int main(int argc, char **argv) {
         if (a & 0x80000000u) {
             uint32_t o = a & 0x3fff;
             if (o >= 0x2000) { ring[(o - 0x2000) >> 2] = v; return; }
+            if (o >= 0x1000 && o < 0x1800) { sdbuf[(o - 0x1000) >> 2] = v & 0xff; return; }
+            if (o == 0x80) { sd_sector = v; return; }
+            if (o == 0x90) { sd_mounted = sd_path != 0; return; }
+            if (o == 0x84 && sd_mounted && sd_sector < sdf.size() / 512) {
+                if (v & 1) memcpy(sdbuf, &sdf[sd_sector * 512], 512);
+                if (v & 2) memcpy(&sdf[sd_sector * 512], sdbuf, 512);
+                return;
+            }
             if (o == 0x00) { char c = (char)v; if (c == '\n') { printf("%s\n", line.c_str()); line.clear(); } else line += c; }
             else if (o >= 0x400 && o < 0x800) pal[(o - 0x400) >> 2] = v;
             else if (o == 0x44) tcmp = v;
@@ -177,6 +208,7 @@ int main(int argc, char **argv) {
                 last = tot;
                 if (prof_from >= 0 && (int)v + 1 >= prof_from) sampling = true;
                 if ((int)v == dump_at) dump_now = true;
+                for (auto &kk : keys) if (kk.first == nframes) { kbd0 = (uint32_t)kk.second << 8; kbdn++; }
                 if (++nframes == stop_frames) done = true;
             }
             else if (o == 0x08) { exit_code = (int)v; done = true; }
@@ -344,6 +376,7 @@ int main(int argc, char **argv) {
         fclose(wavf);
     }
     if (oplf) fclose(oplf);
+    if (sd_path) { FILE *q = fopen(sd_path, "wb"); fwrite(sdf.data(), 1, sdf.size(), q); fclose(q); }
     if (midif) fclose(midif);
     tot.instr = ninstr;
     printf("END pc %08x ra %08x misaligned %llu\n", pc, x[1], (unsigned long long)misaligned);
