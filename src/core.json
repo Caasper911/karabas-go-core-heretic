@@ -27,7 +27,8 @@
             "slot": 0,
             "extensions": ".wad",
             "dir": "/doom",
-            "hotkey": "Menu+F1"
+            "hotkey": "Menu+F1",
+            "autoload": true
         },
         {
             "type": "-"

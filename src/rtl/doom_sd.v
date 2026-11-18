@@ -17,9 +17,9 @@
    0x8c R  SIZE    the size of the mounted file in bytes (low 32 bits)
    0x90 W  BK_REQ  ask for the save file: the value = its size in sectors
    0x1000 + 4 * i  R/W  byte i of the 512-byte sector buffer (bits 7..0)
- The buffer: 512 x 8 distributed RAM, one write port (the CPU, or the bytes of a read from the
- MCU), two reads (the CPU, the MCU for a write: its byte two clocks after sdc_byte_addr: kg_mcu2
- IMG_OUT_LATENCY 2).
+ The buffer: 512 x 8 distributed dual-port RAM: port A writes (the CPU, or the bytes of a read
+ from the MCU) and reads for the CPU, port B reads the byte of a write for the MCU (two clocks
+ after sdc_byte_addr: kg_mcu2 IMG_OUT_LATENCY 2).
 */
 module doom_sd #(
 	parameter [2:0] SLOT = 3'd1
@@ -51,13 +51,15 @@ module doom_sd #(
 	output reg bk_flushed = 1'b0,
 	output reg [31:0] bk_size = 32'd0,
 	output wire [7:0] bk_kind,
-	output wire [7:0] bk_result
+	output wire [7:0] bk_result,
+	output wire [7:0] dbg              // { rd_req, wr_req, busy, wait_done, err, mounted, sdc_busy, sdc_slot is SLOT }
 );
 
 assign bk_kind = 8'd0;
 assign bk_result = 8'h01;                 // done: nothing is held back
 
 wire mine = sdc_slot == SLOT;
+assign dbg = { rd_req, wr_req, busy, wait_done, err, size != 64'd0, sdc_busy, mine };
 wire buf_sel = io_off[13:11] == 3'b010;   // 0x1000..0x17ff
 
 reg [7:0] sbuf [0:511];
@@ -71,13 +73,17 @@ assign sdc_rd = { 7'd0, rd_req } << SLOT;
 assign sdc_wr = { 7'd0, wr_req } << SLOT;
 assign sdc_sector = sector;
 
-// the write port: a byte of a read from the MCU, or the CPU
+// port A (write and an asynchronous read): a byte of a read from the MCU, else the CPU (it reads and
+// writes the buffer only while no command runs); port B (read): the byte of a write for the MCU.
+// Two ports only, or XST makes the buffer of flip-flops (16k LUTs)
 wire mcu_w = busy && wait_done && sdc_byte_in_strobe && mine;
+wire [8:0] a_addr = mcu_w ? sdc_byte_addr : io_off[10:2];
+wire [7:0] a_q = sbuf[a_addr];
 always @(posedge clk) begin
 	if (mcu_w)
-		sbuf[sdc_byte_addr] <= sdc_byte_in_data;
+		sbuf[a_addr] <= sdc_byte_in_data;
 	else if (io_we && buf_sel && !busy)
-		sbuf[io_off[10:2]] <= io_wd[7:0];
+		sbuf[a_addr] <= io_wd[7:0];
 end
 
 // the byte for the MCU (a write): two clocks after its address
@@ -88,7 +94,7 @@ always @(posedge clk) begin
 end
 
 always @(*) begin
-	if (buf_sel) io_rd = { 24'd0, sbuf[io_off[10:2]] };
+	if (buf_sel) io_rd = { 24'd0, a_q };
 	else case (io_off)
 		14'h0088: io_rd = { 29'd0, size != 64'd0, err, busy };
 		14'h008c: io_rd = size[31:0];

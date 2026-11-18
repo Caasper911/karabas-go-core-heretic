@@ -28,11 +28,15 @@ static const char MAGIC[8] = "KGDOOMS1";
 
 static int ready;
 static uint32_t table[SLOTS];
+static int wait_idle(void);
 
+/* a sector takes a few ms; no answer in 500 ms or an error: the save file is given up for this run
+   (the game goes on with the RAM files, a message in the log) */
 static int wait_idle(void) {
     uint32_t t0 = MMIO_MS;
-    while (SD_STAT & 1) if (MMIO_MS - t0 > 3000) return 0;
-    return !(SD_STAT & 2);
+    while (SD_STAT & 1) if (MMIO_MS - t0 > 500) { printf("Saves: SD timeout, off\n"); ready = 0; return 0; }
+    if (SD_STAT & 2) { printf("Saves: SD error, off\n"); ready = 0; return 0; }
+    return 1;
 }
 
 static int sec_read(uint32_t s, uint8_t *buf) {
@@ -78,10 +82,11 @@ void kg_save_init(void) {
     while (!(SD_STAT & 4)) if (MMIO_MS - t0 > 2500) { printf("Saves: no save file\n"); return; }
     if (SD_SIZE < FILE_SECTORS * 512u) { printf("Saves: the save file is too small\n"); return; }
     uint8_t b[512];
-    if (!sec_read(0, b)) { printf("Saves: read error\n"); return; }
+    ready = 1;
+    if (!sec_read(0, b)) { printf("Saves: read error\n"); ready = 0; return; }
     if (memcmp(b, MAGIC, 8)) {
         memset(table, 0, sizeof table);       /* a new file (zeros): an empty table */
-        if (!table_write()) { printf("Saves: write error\n"); return; }
+        if (!table_write()) { printf("Saves: write error\n"); ready = 0; return; }
     } else
         memcpy(table, b + 8, sizeof table);
     for (int i = 0; i < SLOTS; i++) if (table[i] > slot_max(i)) table[i] = 0;
