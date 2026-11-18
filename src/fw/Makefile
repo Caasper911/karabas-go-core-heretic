@@ -79,7 +79,7 @@ HWDEFS  := $(DEFS) -DFEATURE_SOUND
 HWCFLAGS := -march=$(ARCH)_zicsr -mabi=ilp32 $(OPT) -std=gnu11 -g -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -ffunction-sections -fdata-sections -w $(HWDEFS) -I. -I$(DG) -Icompat -I$(CHOC)/opl -I$(CHOC)/src
 HWOBJ   := $(addprefix $(BH)/,$(addsuffix .o,$(filter-out i_video,$(DOOM)))) $(BH)/w_file_kg.o $(BH)/i_video_direct.o \
            $(BH)/opl.o $(BH)/opl_queue.o $(BH)/i_oplmusic.o $(BH)/midifile.o $(BH)/mus2mid.o $(BH)/sdl_compat.o \
-           $(BH)/kg_irq.o $(BH)/opl_kg.o $(BH)/i_kgsound.o $(BH)/i_kgmusic.o $(BH)/trap.o
+           $(BH)/kg_irq.o $(BH)/opl_kg.o $(BH)/i_kgsound.o $(BH)/i_kgmusic.o $(BH)/trap.o $(BH)/kg_save.o
 $(BH):
 	mkdir -p $@
 $(BH)/%.o: $(DG)/%.c | $(BH)
@@ -96,7 +96,7 @@ $(BH)/sdl_compat.o: compat/sdl_compat.c compat/SDL.h | $(BH)
 	$(CROSS)gcc $(HWCFLAGS) -c $< -o $@
 $(BH)/i_video_direct.o: $(B)/i_video_direct.c mmio.h | $(BH)
 	$(CROSS)gcc $(HWCFLAGS) -c $< -o $@
-$(BH)/w_file_kg.o $(BH)/kg_irq.o $(BH)/opl_kg.o $(BH)/i_kgsound.o $(BH)/i_kgmusic.o: $(BH)/%.o: %.c mmio.h kg_irq.h | $(BH)
+$(BH)/w_file_kg.o $(BH)/kg_irq.o $(BH)/opl_kg.o $(BH)/i_kgsound.o $(BH)/i_kgmusic.o $(BH)/kg_save.o: $(BH)/%.o: %.c mmio.h kg_irq.h kg_save.h | $(BH)
 	$(CROSS)gcc $(HWCFLAGS) -c $< -o $@
 $(BH)/trap.o: trap.S | $(BH)
 	$(CROSS)gcc -march=$(ARCH)_zicsr -mabi=ilp32 -c $< -o $@
