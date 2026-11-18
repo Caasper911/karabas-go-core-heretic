@@ -14,8 +14,8 @@
      08 W  EXIT: the code (kept as dbg_exit, bit 8 set: I_Error / exit ran)
      0c R  CYCLES: clocks since reset (low 32)        1c R  MS: milliseconds since reset
      20 R  WADSIZE: bytes of the WAD (0: none yet)
-     28 R  KBD0: the USB boot report bytes 3..0 (key 2, key 1, 0, modifiers)
-     2c R  KBD1: its bytes 7..4 (key 6..3)            30 R  KBDN: reports seen (a counter)
+     28 R  KBD0: kg_mcu2 KBD[31:0] = { key 3, key 2, key 1, modifiers } (the USB boot report)
+     2c R  KBD1: { 0, key 6, key 5, key 4 }            30 R  KBDN: reports seen (a counter)
      34 R  MOUSE: see below, reading clears the sums
      38 R  JOY: { joy_r, joy_l }
      400..7fc W  PAL: palette entry ((a - 400) / 4) = 0x00RRGGBB

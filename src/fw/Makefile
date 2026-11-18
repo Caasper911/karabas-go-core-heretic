@@ -69,6 +69,18 @@ $(B)/$(NAME).elf: $(OBJ) kg_main.c syscalls.c crt0.S mmio.h $(B)/link-$(LAYOUT).
 $(B)/$(NAME).bin: $(B)/$(NAME).elf
 	$(CROSS)objcopy -O binary $< $@
 
+# the board firmware (roms/doom.bin of the .kg): kg_hw.c + crt0_hw.S, LAYOUT sdram, FB direct
+hw: $(B)/doom-hw.bin
+$(B)/doom-hw.elf: $(OBJ) kg_hw.c font8.h syscalls.c crt0_hw.S mmio.h $(B)/link-$(LAYOUT).ld
+	$(CROSS)gcc $(CFLAGS) -c kg_hw.c -o $(B)/kg_hw.o
+	$(CROSS)gcc $(CFLAGS) -c syscalls.c -o $(B)/syscalls.o
+	$(CROSS)gcc $(ABI) -c crt0_hw.S -o $(B)/crt0_hw.o
+	$(CROSS)gcc $(LDFLAGS) -T $(B)/link-$(LAYOUT).ld -Wl,-Map,$(B)/doom-hw.map -o $@ \
+	  $(B)/crt0_hw.o $(OBJ) $(B)/kg_hw.o $(B)/syscalls.o -lm
+	$(CROSS)size $@
+$(B)/doom-hw.bin: $(B)/doom-hw.elf
+	$(CROSS)objcopy -O binary $< $@
+
 clean:
 	rm -rf build-*
-.PHONY: all clean
+.PHONY: all clean hw

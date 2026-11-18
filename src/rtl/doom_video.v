@@ -4,8 +4,8 @@
  doom_video.v
 
  The picture of Doom: the 320x200 frame of 8-bit colours in the SRAM (FB_HW: its halfword address),
- doubled to 640x400 in the middle of 640x480 at 60 Hz (clk_pix 25 MHz, 800 x 525, syncs negative and
- always present, de the 640x480 window; the 40 lines above and below are black).
+ doubled to 640x400 in the middle of 640x480 at 60 Hz (clk_pix 25 MHz, 800 x 525, syncs high active
+ (the OSD overlay wants them so; the top makes them negative for HDMI) and always present, de the 640x480 window; the 40 lines above and below are black).
 
  Lines: source line L is shown on rows 40 + 2L and 41 + 2L; it is fetched into line buffer L & 1 while
  row 38 + 2L begins (a toggle with L to clk_sys: doom_sram vid_* port, 160 halfwords). The other buffer
@@ -29,8 +29,8 @@ module doom_video #(
 
 	input wire clk_pix,
 	output reg [23:0] rgb = 24'd0,
-	output reg hs = 1'b1,
-	output reg vs = 1'b1,
+	output reg hs = 1'b0,
+	output reg vs = 1'b0,
 	output reg de = 1'b0
 );
 
@@ -98,7 +98,7 @@ kg_sync #(.W(1)) sync_show (.clk(clk_pix), .d(show), .q(show_p));
 // colour; n+4: out (the syncs and de through 4 stages as well)
 wire pic0 = h < H_VIS && v >= V_PIC0 && v < V_PIC1;
 wire [7:0] line0 = (v - V_PIC0) >> 1;
-reg [3:0] pic = 4'd0, vis = 4'd0, hsd = 4'hF, vsd = 4'hF;
+reg [3:0] pic = 4'd0, vis = 4'd0, hsd = 4'd0, vsd = 4'd0;
 reg [1:0] bsel = 2'd0;
 always @(posedge clk_pix) begin
 	lb_ra <= { line0[0], h[9:2] };
@@ -106,8 +106,8 @@ always @(posedge clk_pix) begin
 	pal_ra <= bsel[1] ? lb_q[15:8] : lb_q[7:0];
 	pic <= { pic[2:0], pic0 };
 	vis <= { vis[2:0], h < H_VIS && v < V_VIS };
-	hsd <= { hsd[2:0], ~(h >= H_SYNC0 && h < H_SYNC1) };
-	vsd <= { vsd[2:0], ~(v >= V_SYNC0 && v < V_SYNC1) };
+	hsd <= { hsd[2:0], h >= H_SYNC0 && h < H_SYNC1 };
+	vsd <= { vsd[2:0], v >= V_SYNC0 && v < V_SYNC1 };
 	rgb <= (pic[3] && show_p) ? pal_q : 24'd0;
 	de <= vis[3];
 	hs <= hsd[3];
