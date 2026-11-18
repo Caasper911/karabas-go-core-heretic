@@ -1,6 +1,6 @@
 /* Ф0 bench: program, data, zone heap and stack in one region (@REGION@, made by the Makefile).
    SRAM 4 MB at 0 (frame buffer at 0x3f0000, resume area at 0x3ff000), SDRAM 32 MB at 0x10000000
-   (the WAD at 0x11000000), MMIO at 0x80000000. */
+   (program region 12 MB, the WAD at 0x10c00000, up to 20 MB), MMIO at 0x80000000. */
 OUTPUT_ARCH("riscv")
 ENTRY(_start)
 

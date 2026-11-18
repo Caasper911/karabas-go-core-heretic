@@ -34,7 +34,7 @@ ORG := 0x00000000
 LEN := 0x3f0000
 else
 ORG := 0x10000000
-LEN := 0x1000000
+LEN := 0x0c00000
 endif
 
 vpath %.c $(DG)
