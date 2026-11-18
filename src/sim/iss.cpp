@@ -7,10 +7,11 @@
 //
 // usage: iss <fw.bin> --org 0x10000000 [--wad file] [--max Minstr] [--icache B] [--dcache B]
 //            [--prof file: pc + ra every 256 instr] [--prof-from F]
-//            [--dump-at F file: after frame F write SRAM + SDRAM (36 MB) with a resume stub at 0x3ff000]
+//            [--dump-at F file: after frame F write SRAM + SDRAM (36 MB) with a resume stub at 0x11fff000]
 //            [--resume file: start from such a dump (registers from it, cold caches), fw.bin ignored]
 //            [--frames N: stop after N frames]
-// prints per frame: "F,<frame>,<instr>,<im_sram>,<im_sdram>,<dm_sram>,<dm_sdram>,<st_sram>,<st_sdram>"
+//            [--shot F file.ppm: the frame F (FB 0x3f0000 + palette) as a PPM, repeatable]
+// prints per frame: "F,<frame>,<instr>,<im_sram>,<im_sdram>,<dm_sram>,<dm_sdram>,<st_sram>,<st_sdram>,<st8_sram>,<st8_sdram>,<fb hash>"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -41,6 +42,7 @@ struct Cache {
     bool hit(uint32_t a) const { return lines && tag[(a >> 5) % lines] == (a >> 5); }
 };
 
+static uint64_t misaligned = 0;
 struct Cnt { uint64_t instr = 0, im[2] = {0, 0}, dm[2] = {0, 0}, st[2] = {0, 0}, st8[2] = {0, 0}; };
 
 int main(int argc, char **argv) {
@@ -54,6 +56,8 @@ int main(int argc, char **argv) {
     int dump_at = -1, stop_frames = -1, nframes = 0;
     const char *dump_path = 0, *resume = 0;
     bool dump_now = false;
+    std::vector<std::pair<int, std::string>> shots;
+    uint32_t pal[256] = {0};
     for (int i = 2; i < argc; i++) {
         if (!strcmp(argv[i], "--max")) max_instr = strtoull(argv[++i], 0, 10) * 1000000ull;
         else if (!strcmp(argv[i], "--icache")) icb = atoi(argv[++i]);
@@ -65,6 +69,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--dump-at")) { dump_at = atoi(argv[++i]); dump_path = argv[++i]; }
         else if (!strcmp(argv[i], "--resume")) resume = argv[++i];
         else if (!strcmp(argv[i], "--frames")) stop_frames = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--shot")) { int fn = atoi(argv[++i]); shots.push_back({fn, argv[++i]}); }
     }
     if (prof_from >= 0) sampling = false;
     if (resume) { org = 0; }
@@ -86,15 +91,15 @@ int main(int argc, char **argv) {
     if (wad && !resume) {
         FILE *w = fopen(wad, "rb");
         if (!w) { perror(wad); return 2; }
-        wad_size = fread(&sdram[0x01000000], 1, 16u << 20, w);
+        wad_size = fread(&sdram[0x00c00000], 1, 20u << 20, w);
         fclose(w);
     }
     fprintf(stderr, "loaded %zu bytes at %08x, WAD %u bytes, I$ %u D$ %u\n", n, org, wad_size, icb, dcb);
     Cache ic, dc; ic.init(icb); dc.init(dcb);
 
     uint32_t x[32] = {0}, pc = org;
-    const uint32_t RES = 0x3ff000;   // resume area: stub, registers at +0x100, pc at +0x180
-    if (resume) { memcpy(x, &sram[RES + 0x100], 128); x[0] = 0; memcpy(&pc, &sram[RES + 0x180], 4); }
+    const uint32_t RES = 0x11fff000; // resume area (the last 4 KB of the SDRAM: the CPU fetches from the SDRAM only): stub, registers at +0x100, pc at +0x180
+    if (resume) { memcpy(x, &sdram[RES - SDRAM_BASE + 0x100], 128); x[0] = 0; memcpy(&pc, &sdram[RES - SDRAM_BASE + 0x180], 4); }
     uint64_t ninstr = 0;
     Cnt tot, last;
     int exit_code = 0;
@@ -116,6 +121,7 @@ int main(int argc, char **argv) {
         }
         uint8_t *p = host(a, reg);
         if (!p) bad("load from", a);
+        if (a & (sz - 1)) { if (!misaligned++) fprintf(stderr, "MISALIGNED load %d at %08x pc %08x ra %08x\n", sz, a, pc, x[1]); }
         if (dc.miss(a)) tot.dm[reg]++;
         uint32_t v = 0;
         memcpy(&v, p, sz);
@@ -123,16 +129,27 @@ int main(int argc, char **argv) {
     };
     auto st = [&](uint32_t a, uint32_t v, int sz) {
         if (a & 0x80000000u) {
-            uint32_t o = a & 0xff;
+            uint32_t o = a & 0xfff;
             if (o == 0x00) { char c = (char)v; if (c == '\n') { printf("%s\n", line.c_str()); line.clear(); } else line += c; }
+            else if (o >= 0x400 && o < 0x800) pal[(o - 0x400) >> 2] = v;
             else if (o == 0x04) {
+                // FNV-1a of the frame + palette: the oracle for the RTL (same value from tb_soc)
+                uint32_t h = 2166136261u;
+                for (int k = 0; k < 64000; k++) h = (h ^ sram[0x3f0000 + k]) * 16777619u;
+                for (int k = 0; k < 256; k++) h = (h ^ pal[k]) * 16777619u;
+                for (auto &sh : shots) if (sh.first == (int)v) {
+                    FILE *pp = fopen(sh.second.c_str(), "wb");
+                    fprintf(pp, "P6 320 200 255\n");
+                    for (int k = 0; k < 64000; k++) { uint32_t c = pal[sram[0x3f0000 + k]]; fputc(c >> 16, pp); fputc((c >> 8) & 255, pp); fputc(c & 255, pp); }
+                    fclose(pp);
+                }
                 tot.instr = ninstr;
-                printf("F,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n", v,
+                printf("F,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%08x\n", v,
                        (unsigned long long)(tot.instr - last.instr),
                        (unsigned long long)(tot.im[0] - last.im[0]), (unsigned long long)(tot.im[1] - last.im[1]),
                        (unsigned long long)(tot.dm[0] - last.dm[0]), (unsigned long long)(tot.dm[1] - last.dm[1]),
                        (unsigned long long)(tot.st[0] - last.st[0]), (unsigned long long)(tot.st[1] - last.st[1]),
-                       (unsigned long long)(tot.st8[0] - last.st8[0]), (unsigned long long)(tot.st8[1] - last.st8[1]));
+                       (unsigned long long)(tot.st8[0] - last.st8[0]), (unsigned long long)(tot.st8[1] - last.st8[1]), h);
                 last = tot;
                 if (prof_from >= 0 && (int)v + 1 >= prof_from) sampling = true;
                 if ((int)v == dump_at) dump_now = true;
@@ -143,6 +160,7 @@ int main(int argc, char **argv) {
         }
         uint8_t *p = host(a, reg);
         if (!p) bad("store to", a);
+        if (a & (sz - 1)) { if (!misaligned++) fprintf(stderr, "MISALIGNED store %d at %08x pc %08x ra %08x\n", sz, a, pc, x[1]); }
         tot.st[reg]++;                 // write-through D$: every store is a bus write (no allocate)
         if (sz < 4) tot.st8[reg]++;    // of them bytes / halfwords (a 16-bit bus needs a mask, a cache line a merge)
         memcpy(p, &v, sz);
@@ -244,11 +262,11 @@ int main(int argc, char **argv) {
         pc = npc;
         ninstr++;
         if (dump_now) {
-            // resume stub (as core-pico8): tb_soc --rv 0x3ff000: x31 = base, mepc = pc, mstatus.MPP = M,
+            // resume stub (as core-pico8), at the end of the SDRAM: x31 = base, mepc = pc, mstatus.MPP = M,
             // load x1..x31, mret
             auto I = [](int imm, int rs1, int f3, int rd, int op) { return (uint32_t)((imm & 0xfff) << 20 | rs1 << 15 | f3 << 12 | rd << 7 | op); };
             std::vector<uint32_t> code;
-            code.push_back((0x3ffu << 12) | (31 << 7) | 0x37);   // lui x31, 0x3ff
+            code.push_back((0x11fffu << 12) | (31 << 7) | 0x37); // lui x31, 0x11fff
             code.push_back(I(0x180, 31, 2, 5, 0x03));             // lw x5, pc
             code.push_back(I(0x341, 5, 1, 0, 0x73));              // csrw mepc, x5
             code.push_back((0x2u << 12) | (5 << 7) | 0x37);       // lui x5, 2
@@ -256,9 +274,10 @@ int main(int argc, char **argv) {
             code.push_back(I(0x300, 5, 1, 0, 0x73));              // csrw mstatus, x5
             for (int r = 1; r <= 31; r++) code.push_back(I(0x100 + 4 * r, 31, 2, r, 0x03));
             code.push_back(0x30200073);                           // mret
-            memcpy(&sram[RES], code.data(), code.size() * 4);
-            for (int r = 0; r < 32; r++) memcpy(&sram[RES + 0x100 + 4 * r], &x[r], 4);
-            memcpy(&sram[RES + 0x180], &pc, 4);
+            uint8_t *rb = &sdram[RES - SDRAM_BASE];
+            memcpy(rb, code.data(), code.size() * 4);
+            for (int r = 0; r < 32; r++) memcpy(rb + 0x100 + 4 * r, &x[r], 4);
+            memcpy(rb + 0x180, &pc, 4);
             FILE *d = fopen(dump_path, "wb");
             fwrite(sram.data(), 1, SRAM_SIZE, d);
             fwrite(sdram.data(), 1, SDRAM_SIZE, d);
@@ -271,7 +290,7 @@ int main(int argc, char **argv) {
     if (!line.empty()) printf("%s\n", line.c_str());
     if (prof) fclose(prof);
     tot.instr = ninstr;
-    printf("END pc %08x ra %08x\n", pc, x[1]);
+    printf("END pc %08x ra %08x misaligned %llu\n", pc, x[1], (unsigned long long)misaligned);
     printf("END instr %llu exit %d%s im %llu/%llu dm %llu/%llu st %llu/%llu (sram/sdram)\n", (unsigned long long)ninstr, exit_code, done ? "" : " (max)",
            (unsigned long long)tot.im[0], (unsigned long long)tot.im[1], (unsigned long long)tot.dm[0], (unsigned long long)tot.dm[1],
            (unsigned long long)tot.st[0], (unsigned long long)tot.st[1]);

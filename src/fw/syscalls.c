@@ -31,9 +31,16 @@ int kg_is_wad(const char *name) {
     return n > 4 && !strcasecmp(name + n - 4, ".wad") && MMIO_WADSIZE != 0;
 }
 
+/* the board build (kg_hw.c) keeps a log of the console and draws it at exit */
+void kg_log_putc(char c) __attribute__((weak));
+void kg_exit_screen(int code) __attribute__((weak));
+
 int _write(int fd, const char *buf, int len) {
     if (fd != 1 && fd != 2) { errno = EBADF; return -1; }
-    for (int i = 0; i < len; i++) MMIO_UART = (uint8_t)buf[i];
+    for (int i = 0; i < len; i++) {
+        MMIO_UART = (uint8_t)buf[i];
+        if (kg_log_putc) kg_log_putc(buf[i]);
+    }
     return len;
 }
 int _read(int fd, char *buf, int len) {
@@ -86,6 +93,7 @@ int _gettimeofday(struct timeval *tv, void *tz) {
     return 0;
 }
 void _exit(int code) {
+    if (kg_exit_screen) kg_exit_screen(code);
     MMIO_EXIT = (uint32_t)code;
     for (;;) {}
 }

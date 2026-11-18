@@ -10,9 +10,9 @@
 #define MMIO_CYCLES  MMIO_REG(0x0c) /* read: clock cycles (ISS: instructions), low 32 bits */
 #define MMIO_MS      MMIO_REG(0x1c) /* read: milliseconds (ISS: instructions / 50000) */
 #define MMIO_WADSIZE MMIO_REG(0x20) /* read: size of the WAD in memory at WAD_BASE */
-#define MMIO_TICS    MMIO_REG(0x24) /* write: game tic index (marks tics run without a frame) */
+#define MMIO_PAL(i)  MMIO_REG(0x400 + 4 * (i)) /* write: palette entry i = 0x00RRGGBB (256 entries) */
 
 #define SRAM_BASE  0x00000000u
 #define SDRAM_BASE 0x10000000u
-#define WAD_BASE   0x11000000u      /* the WAD, loaded by the sim (on the board: by the FL item) */
+#define WAD_BASE   0x10c00000u      /* the WAD (up to 20 MB), loaded by the sim (on the board: by the FL item) */
 #define FB_BASE    (SRAM_BASE + 0x3f0000u) /* 320x200x8 frame in SRAM (below the 4 KB resume area) */
