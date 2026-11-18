@@ -38,7 +38,15 @@ int kg_is_wad(const char *name) {
    it back), default.cfg, savegames. One open handle per file. */
 #include <stdlib.h>
 #include <fcntl.h>
-typedef struct { char name[64]; uint8_t *data; uint32_t size, cap, pos; int used, open; } ramfile_t;
+typedef struct { char name[64]; uint8_t *data; uint32_t size, cap, pos; int used, open, written; } ramfile_t;
+/* Ф3: the kept files (default.cfg, savegames) come from and go to the save file on the SD card
+   (kg_save.c of the board build: weak here, absent in the ISS bench build) */
+#include "kg_save.h"
+int kg_save_kept(const char *name) __attribute__((weak));
+int kg_save_size(const char *name) __attribute__((weak));
+int kg_save_load(const char *name, uint8_t *out, uint32_t cap) __attribute__((weak));
+int kg_save_store(const char *name, const uint8_t *data, uint32_t size) __attribute__((weak));
+void kg_save_remove(const char *name) __attribute__((weak));
 static ramfile_t rf[RAM_FILES];
 
 static ramfile_t *rf_find(const char *name) {
@@ -97,6 +105,20 @@ int _open(const char *name, int flags, int mode) {
     (void)mode;
     if ((flags & 3) == O_RDONLY && kg_is_wad(name)) { wad_pos = 0; return WAD_FD; }
     ramfile_t *f = rf_find(name);
+    if (!f && (flags & 3) == O_RDONLY && kg_save_size && kg_save_size(name) >= 0) {
+        /* a kept file: read it into a RAM file first */
+        int n = kg_save_size(name);
+        for (int i = 0; i < RAM_FILES && !f; i++) if (!rf[i].used) f = &rf[i];
+        if (f && strlen(name) < sizeof f->name) {
+            memset(f, 0, sizeof *f);
+            f->data = malloc(n ? n : 1);
+            if (f->data && kg_save_load(name, f->data, n) == n) {
+                strcpy(f->name, name);
+                f->used = 1;
+                f->size = f->cap = n;
+            } else { free(f->data); memset(f, 0, sizeof *f); f = 0; }
+        } else f = 0;
+    }
     if ((flags & 3) == O_RDONLY) {
         if (!f || f->open) { errno = ENOENT; return -1; }
     } else {
@@ -109,6 +131,7 @@ int _open(const char *name, int flags, int mode) {
         }
         if (f->open) { errno = EBUSY; return -1; }
         if (flags & O_TRUNC) f->size = 0;
+        f->written = 1;
     }
     f->open = 1;
     f->pos = (flags & O_APPEND) ? f->size : 0;
@@ -116,7 +139,12 @@ int _open(const char *name, int flags, int mode) {
 }
 int _close(int fd) {
     ramfile_t *f = rf_fd(fd);
-    if (f) { f->open = 0; return 0; }
+    if (f) {
+        f->open = 0;
+        if (f->written && kg_save_store && kg_save_kept(f->name)) kg_save_store(f->name, f->data, f->size);
+        f->written = 0;
+        return 0;
+    }
     return fd == WAD_FD ? 0 : -1;
 }
 int _fstat(int fd, struct stat *st) {
@@ -141,6 +169,7 @@ int _lseek(int fd, int off, int whence) {
     return (int)wad_pos;
 }
 int _unlink(const char *name) {
+    if (kg_save_remove) kg_save_remove(name);
     ramfile_t *f = rf_find(name);
     if (!f) { errno = ENOENT; return -1; }
     free(f->data);
@@ -153,14 +182,17 @@ int _stat(const char *name, struct stat *st) {
     if (kg_is_wad(name)) { st->st_mode = S_IFREG; st->st_size = MMIO_WADSIZE; return 0; }
     ramfile_t *f = rf_find(name);
     if (f) { st->st_mode = S_IFREG; st->st_size = f->size; return 0; }
+    if (kg_save_size && kg_save_size(name) >= 0) { st->st_mode = S_IFREG; st->st_size = kg_save_size(name); return 0; }
     errno = ENOENT;
     return -1;
 }
 int _rename(const char *a, const char *b) {
     ramfile_t *f = rf_find(a);
     if (!f || strlen(b) >= sizeof f->name) { errno = ENOENT; return -1; }
-    _unlink(b);
+    ramfile_t *g = rf_find(b);
+    if (g && g != f) { free(g->data); memset(g, 0, sizeof *g); }
     strcpy(f->name, b);
+    if (kg_save_store && kg_save_kept(b)) kg_save_store(b, f->data, f->size);
     return 0;
 }
 int rename(const char *a, const char *b) { return _rename(a, b); }

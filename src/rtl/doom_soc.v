@@ -25,6 +25,7 @@
      48 W  TEN: bit 0
      50 R  SW: the OSD switches (kg_mcu2 SW, item 2 = Music in bits 15..8)
      60..70, 2000..3ffc: doom_audio (OPL3, MIDI, the SFX ring)
+     80..90, 1000..17fc: doom_sd (the save file, its sector buffer)
      400..7fc W  PAL: palette entry ((a - 400) / 4) = 0x00RRGGBB
    MOUSE: bits 31..24 buttons, 23..12 dy sum, 11..0 dx sum (signed 12 bit, saturated; reading clears).
  Instruction fetch: the SDRAM only (the program). The I and D buses share the SDRAM (D first), the
@@ -261,8 +262,10 @@ reg [31:0] io_dat = 32'd0;
 wire [13:0] io_off14 = { d_adr[11:0], 2'b00 };
 wire [11:0] io_off = io_off14[11:0];
 wire io_low = io_off14[13:12] == 2'b00;   // 0x0000..0x0fff: the registers here and the palette
-// doom_audio: the SFX ring 0x2000..0x3ffc (all of it) and the registers 0x60..0x7c
-wire aud_sel = io_off14[13] || (io_off14[13:12] == 2'b00 && (io_off14[11:4] == 8'h06 || io_off14[11:4] == 8'h07));
+// the registers of the top (doom_audio: the SFX ring 0x2000..0x3ffc, 0x60..0x7c; doom_sd: 0x80..0x9c,
+// its sector buffer 0x1000..0x17fc): the aud_* bus
+wire aud_sel = io_off14[13] || io_off14[13:11] == 3'b010 ||
+	(io_off14[13:12] == 2'b00 && (io_off14[11:4] == 8'h06 || io_off14[11:4] == 8'h07 || io_off14[11:4] == 8'h08 || io_off14[11:4] == 8'h09));
 assign aud_we = d_req && d_io && !io_ack && !cpu_reset && d_we && aud_sel;
 assign aud_off = io_off14;
 assign aud_wd = d_dat_o;

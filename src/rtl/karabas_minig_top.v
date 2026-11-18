@@ -185,6 +185,12 @@ wire [7:0] ld_slot, ld_data;
 wire [31:0] ld_addr;
 wire ld_start, ld_active, ld_end, ld_wr, ld_ready;
 wire [8*3-1:0] sw;
+wire [7:0] sdc_img_mounted, sdc_rd, sdc_wr, sdc_byte_in_data, sdc_byte_out_data, img_flush, bk_kind, bk_result;
+wire [63:0] sdc_img_size;
+wire [31:0] sdc_sector, bk_size;
+wire sdc_busy, sdc_done, sdc_error, sdc_byte_in_strobe, bk_mount, bk_flushed;
+wire [2:0] sdc_slot;
+wire [8:0] sdc_byte_addr;
 wire dvi_only;
 wire ft_cs_n, ft_mosi, ft_spi_on, sd2_cs_n, sd2_mosi;
 wire [15:0] dbg_addr;
@@ -201,9 +207,10 @@ wire [5:0] osd_pw;
 kg_mcu2 #(
 	.SW_N(3),
 	.CS_FILTER(3),
-	.CAPS(16'h0010),     // bit 4: the core drives LD_READY
+	.CAPS(16'h0012),     // bit 4: the core drives LD_READY, bit 1: backup RAM (the save file, doom_sd)
 	.ENABLE_OSD(1),
-	.ENABLE_IMG(0),
+	.ENABLE_IMG(1),
+	.IMG_OUT_LATENCY(2), // doom_sd: the byte two clocks after SDC_BYTE_ADDR
 	.ENABLE_AUX(1),      // DEBUG_*: the state of the core (AT+KARABAS=debug:1, kg_board.py log)
 	.ENABLE_FT(1),
 	.ENABLE_SD2(1)
@@ -235,10 +242,11 @@ kg_mcu2 #(
 	.OSD_FG(osd_fg), .OSD_BG(osd_bg), .OSD_ALPHA(osd_alpha), .OSD_PX(osd_px), .OSD_PY(osd_py),
 	.OSD_PW(osd_pw), .OSD_PH(osd_ph), .OSD_PLACE(osd_place), .OSD_ZOOM(osd_zoom),
 
-	.SDC_IMG_MOUNTED(), .SDC_IMG_SIZE(), .SDC_RD(8'd0), .SDC_WR(8'd0),
-	.SDC_SECTOR(32'd0), .SDC_BUSY(), .SDC_DONE(), .SDC_ERROR(), .SDC_SLOT(),
-	.SDC_BYTE_IN_STROBE(), .SDC_BYTE_ADDR(), .SDC_BYTE_IN_DATA(),
-	.SDC_BYTE_OUT_DATA(8'd0), .IMG_WP(), .IMG_PHYS_WR(), .IMG_PHYS(), .IMG_FLUSH(), .FDD_CHNG_WR(), .FDD_CHNG(),
+	.SDC_IMG_MOUNTED(sdc_img_mounted), .SDC_IMG_SIZE(sdc_img_size), .SDC_RD(sdc_rd), .SDC_WR(sdc_wr),
+	.SDC_SECTOR(sdc_sector), .SDC_BUSY(sdc_busy), .SDC_DONE(sdc_done), .SDC_ERROR(sdc_error), .SDC_SLOT(sdc_slot),
+	.SDC_BYTE_IN_STROBE(sdc_byte_in_strobe), .SDC_BYTE_ADDR(sdc_byte_addr), .SDC_BYTE_IN_DATA(sdc_byte_in_data),
+	.SDC_BYTE_OUT_DATA(sdc_byte_out_data), .IMG_WP(), .IMG_PHYS_WR(), .IMG_PHYS(), .IMG_FLUSH(img_flush), .FDD_CHNG_WR(), .FDD_CHNG(),
+	.BK_MOUNT(bk_mount), .BK_FLUSHED(bk_flushed), .BK_SLOT(3'd1), .BK_SIZE(bk_size), .BK_KIND(bk_kind), .BK_RESULT(bk_result),
 	.FDD_CHNG_REQ(1'b0), .FDD_CHNG_DS(2'd0), .IMG_ACTIVE(),
 	.PORT_OUT_DATA(), .PORT_OUT_WR(), .PORT_OUT_READY(4'b1111), .PORT_IN_DATA(32'd0), .PORT_IN_WR(4'd0),
 	.PORT_CFG(128'd0), .PORT_IN_FULL(), .PORT_STAT(), .PORT_STAT_WR(),
@@ -280,7 +288,9 @@ wire [8:0] dbg_exit;
 wire [7:0] dbg_state, dbg_tcmp_n;
 wire aud_we;
 wire [13:0] aud_off;
-wire [31:0] aud_wd, aud_rd;
+wire [31:0] aud_wd, aud_rd, aud_rd_audio, aud_rd_sd;
+// the aud_* bus of doom_soc: doom_sd for 0x80..0x9c and 0x1000..0x17fc, doom_audio for the rest
+assign aud_rd = (aud_off[13:11] == 3'b010 || aud_off[11:5] == 7'b0000100) ? aud_rd_sd : aud_rd_audio;
 
 doom_soc soc (
 	.clk(clk_sys),
@@ -296,6 +306,19 @@ doom_soc soc (
 	.sdr_a(SDR_A), .sdr_ba(SDR_BA), .sdr_dq_i(SDR_DQ), .sdr_dq_o(sdr_dq_o), .sdr_dq_oe_n(sdr_dq_oe_n),
 	.sdr_dqm(SDR_DQM), .sdr_ras_n(SDR_RAS_N), .sdr_cas_n(SDR_CAS_N), .sdr_we_n(SDR_WE_N),
 	.MA(MA), .MD_I(MD), .MD_O(md_o), .MD_OE_N(md_oe_n), .MWR_N(MWR_N), .MRD_N(MRD_N)
+);
+
+// ------------------------------------------------------------------ the save file (Ф3)
+
+doom_sd #(.SLOT(3'd1)) sd (
+	.clk(clk_sys),
+	.reset(areset),
+	.io_we(aud_we), .io_off(aud_off), .io_wd(aud_wd), .io_rd(aud_rd_sd),
+	.sdc_img_mounted(sdc_img_mounted), .sdc_img_size(sdc_img_size), .sdc_rd(sdc_rd), .sdc_wr(sdc_wr),
+	.sdc_sector(sdc_sector), .sdc_busy(sdc_busy), .sdc_done(sdc_done), .sdc_error(sdc_error), .sdc_slot(sdc_slot),
+	.sdc_byte_in_strobe(sdc_byte_in_strobe), .sdc_byte_addr(sdc_byte_addr), .sdc_byte_in_data(sdc_byte_in_data),
+	.sdc_byte_out_data(sdc_byte_out_data), .img_flush(img_flush),
+	.bk_mount(bk_mount), .bk_flushed(bk_flushed), .bk_size(bk_size), .bk_kind(bk_kind), .bk_result(bk_result)
 );
 
 // ------------------------------------------------------------------ video
@@ -329,7 +352,7 @@ wire signed [15:0] snd_l, snd_r;
 doom_audio audio (
 	.clk(clk_sys),
 	.reset(areset),
-	.io_we(aud_we), .io_off(aud_off), .io_wd(aud_wd), .io_rd(aud_rd),
+	.io_we(aud_we), .io_off(aud_off), .io_wd(aud_wd), .io_rd(aud_rd_audio),
 	.midi_tx(MIDI_TX),
 	.clk_a(clk_pix),
 	.adc_clk_en(),
