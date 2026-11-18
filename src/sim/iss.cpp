@@ -7,7 +7,7 @@
 //
 // usage: iss <fw.bin> --org 0x10000000 [--wad file] [--max Minstr] [--icache B] [--dcache B]
 //            [--prof file: pc + ra every 256 instr] [--prof-from F]
-//            [--dump-at F file: after frame F write SRAM + SDRAM (36 MB) with a resume stub at 0x3ff000]
+//            [--dump-at F file: after frame F write SRAM + SDRAM (36 MB) with a resume stub at 0x11fff000]
 //            [--resume file: start from such a dump (registers from it, cold caches), fw.bin ignored]
 //            [--frames N: stop after N frames]
 //            [--shot F file.ppm: the frame F (FB 0x3f0000 + palette) as a PPM, repeatable]
@@ -98,8 +98,8 @@ int main(int argc, char **argv) {
     Cache ic, dc; ic.init(icb); dc.init(dcb);
 
     uint32_t x[32] = {0}, pc = org;
-    const uint32_t RES = 0x3ff000;   // resume area: stub, registers at +0x100, pc at +0x180
-    if (resume) { memcpy(x, &sram[RES + 0x100], 128); x[0] = 0; memcpy(&pc, &sram[RES + 0x180], 4); }
+    const uint32_t RES = 0x11fff000; // resume area (the last 4 KB of the SDRAM: the CPU fetches from the SDRAM only): stub, registers at +0x100, pc at +0x180
+    if (resume) { memcpy(x, &sdram[RES - SDRAM_BASE + 0x100], 128); x[0] = 0; memcpy(&pc, &sdram[RES - SDRAM_BASE + 0x180], 4); }
     uint64_t ninstr = 0;
     Cnt tot, last;
     int exit_code = 0;
@@ -262,11 +262,11 @@ int main(int argc, char **argv) {
         pc = npc;
         ninstr++;
         if (dump_now) {
-            // resume stub (as core-pico8): tb_soc --rv 0x3ff000: x31 = base, mepc = pc, mstatus.MPP = M,
+            // resume stub (as core-pico8), at the end of the SDRAM: x31 = base, mepc = pc, mstatus.MPP = M,
             // load x1..x31, mret
             auto I = [](int imm, int rs1, int f3, int rd, int op) { return (uint32_t)((imm & 0xfff) << 20 | rs1 << 15 | f3 << 12 | rd << 7 | op); };
             std::vector<uint32_t> code;
-            code.push_back((0x3ffu << 12) | (31 << 7) | 0x37);   // lui x31, 0x3ff
+            code.push_back((0x11fffu << 12) | (31 << 7) | 0x37); // lui x31, 0x11fff
             code.push_back(I(0x180, 31, 2, 5, 0x03));             // lw x5, pc
             code.push_back(I(0x341, 5, 1, 0, 0x73));              // csrw mepc, x5
             code.push_back((0x2u << 12) | (5 << 7) | 0x37);       // lui x5, 2
@@ -274,9 +274,10 @@ int main(int argc, char **argv) {
             code.push_back(I(0x300, 5, 1, 0, 0x73));              // csrw mstatus, x5
             for (int r = 1; r <= 31; r++) code.push_back(I(0x100 + 4 * r, 31, 2, r, 0x03));
             code.push_back(0x30200073);                           // mret
-            memcpy(&sram[RES], code.data(), code.size() * 4);
-            for (int r = 0; r < 32; r++) memcpy(&sram[RES + 0x100 + 4 * r], &x[r], 4);
-            memcpy(&sram[RES + 0x180], &pc, 4);
+            uint8_t *rb = &sdram[RES - SDRAM_BASE];
+            memcpy(rb, code.data(), code.size() * 4);
+            for (int r = 0; r < 32; r++) memcpy(rb + 0x100 + 4 * r, &x[r], 4);
+            memcpy(rb + 0x180, &pc, 4);
             FILE *d = fopen(dump_path, "wb");
             fwrite(sram.data(), 1, SRAM_SIZE, d);
             fwrite(sdram.data(), 1, SDRAM_SIZE, d);
