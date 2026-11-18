@@ -1,7 +1,7 @@
 {
     "id": "doom",
     "name": "Doom",
-    "build": "26111821",
+    "build": "26111822",
     "visible": true,
     "type": "osd",
     "order": 30,
@@ -16,17 +16,17 @@
     "boards": {
         "go": {
             "link": 2,
-            "build": "26111821",
+            "build": "26111822",
             "bitstream": "karabas_go.bin"
         },
         "mini": {
             "link": 2,
-            "build": "26111821",
+            "build": "26111822",
             "bitstream": "karabas_mini.bin"
         },
         "minig": {
             "link": 2,
-            "build": "26111821",
+            "build": "26111822",
             "bitstream": "karabas_minig.bin"
         }
     },
@@ -54,6 +54,26 @@
             "default": 1,
             "hotkey": "Menu+M",
             "index": 1
+        },
+        {
+            "type": "S",
+            "name": "Controls",
+            "options": [
+                "Classic",
+                "WASD"
+            ],
+            "default": 0,
+            "index": 3
+        },
+        {
+            "type": "S",
+            "name": "Mouse move",
+            "options": [
+                "Off",
+                "On"
+            ],
+            "default": 0,
+            "index": 4
         },
         {
             "type": "-"

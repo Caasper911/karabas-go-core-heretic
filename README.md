@@ -39,21 +39,25 @@ Not done: PWADs (only one IWAD is loaded), network play.
 |---|---|---|
 | WAD | `.wad` file (loaded at the core start) | Menu+F1 |
 | Music | MIDI / OPL3 / Off | Menu+M |
+| Controls | Classic / WASD (see below) | |
+| Mouse move | Off / On: the mouse also moves forward and back (as vanilla Doom; Off = only turns) | |
 | Reset | restarts Doom | F12 |
 
 ## Controls
 
 | Action | Keyboard | Pad |
 |---|---|---|
-| Move, turn | arrows | D-pad |
+| Move, turn | arrows (WASD: also W / S, A / D strafe) | D-pad |
 | Fire | Ctrl, left mouse button | A |
-| Use (doors, switches) | Space | B |
+| Use (doors, switches) | Space (WASD: also E, right mouse button) | B |
 | Run | Shift | C |
 | Strafe | Alt (with the arrows), `,` / `.` | |
-| Weapons | 1 .. 7 | |
-| Menu | Esc | X |
-| Map | Tab | |
+| Weapons | 1 .. 7, `[` / `]` previous / next | Z / Y previous / next |
+| Menu, Enter | Esc, Enter | X, Start |
+| Map | Tab | Mode |
 | Save / load | F2 / F3 | |
+
+Mouse buttons in Classic: left fire, right strafe, middle forward. Both pads work (the same buttons). In WASD the letters W, A, S, D, E act as game keys outside the menu only (the savegame names are typed as usual); cheat codes with them do not work in this mode.
 
 The other keys are those of Doom (F1 help, F5 detail, F6 quicksave, F9 quickload, F11 gamma, `-` / `=` screen size).
 

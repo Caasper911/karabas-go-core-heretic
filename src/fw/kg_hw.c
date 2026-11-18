@@ -3,13 +3,21 @@
  *   of a ramp palette + the log), then starts Doom.
  * - Keys: the USB boot report of kg_mcu2 (KBD0 / KBD1, KBDN counts reports) compared with the last
  *   one -> Doom key events (USB usage -> doomkeys.h). Mouse: the sums of MMIO_MOUSE -> ev_mouse.
- *   Pad (JOY, port 0): arrows, A = fire, B = use, C = run (shift), start = Enter, X = Esc.
+ *   Pads (JOY, both ports): arrows, A = fire, B = use, C = run (shift), Start = Enter, X = Esc,
+ *   Y / Z = next / previous weapon, Mode = the map (Tab). [ / ] on the keyboard: previous / next weapon.
+ * - OSD Controls (MMIO_SW 23..16): 0 Classic (arrows, mouse: left fire, right strafe, middle
+ *   forward), 1 WASD (also W / S forward / back, A / D strafe, E use outside the menu; mouse: left
+ *   fire, right use). OSD Mouse move (31..24): 0 off (novert: the mouse only turns), 1 on.
  * - The console (printf) goes to MMIO_UART and to a log of the last lines; at exit (I_Error, quit)
  *   the log is drawn on the screen in the 8x8 font (font8.h) with a grey palette, and the CPU waits. */
 #include <stdint.h>
 #include <string.h>
 #include "doomgeneric.h"
 #include "doomkeys.h"
+#include "doomtype.h"
+#include "m_controls.h"
+
+extern boolean menuactive;
 #include "d_event.h"
 #include "mmio.h"
 #include "font8.h"
@@ -125,6 +133,37 @@ static uint8_t last_rep[7];
 static uint32_t last_kbdn;
 static uint32_t last_joy;
 
+static unsigned char held_as[256];
+static int wasd, mouse_move;
+
+/* the OSD items Controls / Mouse move, applied when they change (and once after default.cfg) */
+static void apply_controls(void) {
+    static int last = -1;
+    int sw = (MMIO_SW >> 16) & 0xffff;
+    if (sw == last) return;
+    last = sw;
+    wasd = (sw & 0xff) == 1;
+    mouse_move = (sw >> 8) == 1;
+    key_prevweapon = '[';
+    key_nextweapon = ']';
+    mousebfire = 0;
+    mousebstrafe = wasd ? -1 : 1;
+    mousebforward = wasd ? -1 : 2;
+    mousebuse = wasd ? 1 : -1;
+}
+
+/* the Doom key of a USB usage: WASD in the game (not in the menu: the names of the savegames) */
+static unsigned char key_of(uint8_t u) {
+    if (wasd && !menuactive) switch (u) {
+    case 0x1a: return KEY_UPARROW;     /* W */
+    case 0x16: return KEY_DOWNARROW;   /* S */
+    case 0x04: return KEY_STRAFE_L;    /* A */
+    case 0x07: return KEY_STRAFE_R;    /* D */
+    case 0x08: return KEY_USE;         /* E */
+    }
+    return usb_to_doom(u);
+}
+
 static int has(const uint8_t *r, uint8_t u) {
     for (int i = 1; i < 7; i++) if (r[i] == u) return 1;
     return 0;
@@ -141,19 +180,22 @@ static void poll_input(void) {
             if (was != now) push(now, mod_key[b]);
         }
         for (int i = 1; i < 7; i++) {
-            if (last_rep[i] > 3 && !has(rep, last_rep[i])) push(0, usb_to_doom(last_rep[i]));
-            if (rep[i] > 3 && !has(last_rep, rep[i])) push(1, usb_to_doom(rep[i]));
+            /* a key is released as the Doom key it was pressed as (WASD: the menu may open between) */
+            if (last_rep[i] > 3 && !has(rep, last_rep[i])) push(0, held_as[last_rep[i]]);
+            if (rep[i] > 3 && !has(last_rep, rep[i])) push(1, held_as[rep[i]] = key_of(rep[i]));
         }
         memcpy(last_rep, rep, 7);
     }
-    uint32_t j = MMIO_JOY & 0xffff;
+    uint32_t jr = MMIO_JOY, j = (jr | (jr >> 16)) & 0xffff;   /* both pads */
     if (j != last_joy) {
-        static const unsigned char jk[10] = { 0, KEY_UPARROW, KEY_DOWNARROW, KEY_LEFTARROW, KEY_RIGHTARROW,
-                                              KEY_ENTER, KEY_FIRE, KEY_USE, KEY_RSHIFT, KEY_ESCAPE };
-        for (int b = 1; b < 10; b++)
+        static const unsigned char jk[13] = { 0, KEY_UPARROW, KEY_DOWNARROW, KEY_LEFTARROW, KEY_RIGHTARROW,
+                                              KEY_ENTER, KEY_FIRE, KEY_USE, KEY_RSHIFT, KEY_ESCAPE,
+                                              ']', '[', KEY_TAB };
+        for (int b = 1; b < 13; b++)
             if (((j ^ last_joy) >> b) & 1) push((j >> b) & 1, jk[b]);
         last_joy = j;
     }
+    apply_controls();
     uint32_t m = MMIO_MOUSE;
     int dx = (int32_t)(m << 20) >> 20, dy = (int32_t)(m << 8) >> 20, mb = m >> 24;
     static int last_mb;
@@ -162,7 +204,7 @@ static void poll_input(void) {
         ev.type = ev_mouse;
         ev.data1 = mb & 7;
         ev.data2 = dx * 4;
-        ev.data3 = -dy * 4;
+        ev.data3 = mouse_move ? -dy * 4 : 0;
         D_PostEvent(&ev);
         last_mb = mb;
     }
