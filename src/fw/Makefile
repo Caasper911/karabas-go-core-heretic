@@ -11,6 +11,7 @@ LAYOUT  ?= sdram
 FB      ?= direct
 MB      ?= 6
 ARGS    ?= -timedemo demo1
+HWARGS  ?=
 NAME    := doom-$(FB)-$(LAYOUT)-$(MB)
 
 DG      := ../../upstream/doomgeneric/doomgeneric
@@ -71,8 +72,9 @@ $(B)/$(NAME).bin: $(B)/$(NAME).elf
 
 # the board firmware (roms/doom.bin of the .kg): kg_hw.c + crt0_hw.S, LAYOUT sdram, FB direct
 hw: $(B)/doom-hw.bin
+.PHONY: $(B)/doom-hw.elf
 $(B)/doom-hw.elf: $(OBJ) kg_hw.c font8.h syscalls.c crt0_hw.S mmio.h $(B)/link-$(LAYOUT).ld
-	$(CROSS)gcc $(CFLAGS) -c kg_hw.c -o $(B)/kg_hw.o
+	$(CROSS)gcc $(CFLAGS) '-DHWARGS="$(HWARGS)"' -c kg_hw.c -o $(B)/kg_hw.o
 	$(CROSS)gcc $(CFLAGS) -c syscalls.c -o $(B)/syscalls.o
 	$(CROSS)gcc $(ABI) -c crt0_hw.S -o $(B)/crt0_hw.o
 	$(CROSS)gcc $(LDFLAGS) -T $(B)/link-$(LAYOUT).ld -Wl,-Map,$(B)/doom-hw.map -o $@ \

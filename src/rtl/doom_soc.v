@@ -10,7 +10,9 @@
    0x00000000 SRAM 4 MB (the frame 0x3f0000)       0x10000000 SDRAM 32 MB (program 0, WAD 0xc00000)
    0x80000000 MMIO (uncached: VexRiscv IO range = bit 31), word registers:
      00 W  UART: a byte of the console (kept as dbg_uart for the debug output)
-     04 W  FRAME: a frame is drawn (the video shows the frame buffer; counted in frame_n)
+     04 W  FRAME: a frame is drawn: copied by DMA (doom_sram) into the display buffer not shown
+           (disp_front toggles when done; the video flips at its next frame, disp_shown); the CPU
+           waits for the SRAM meanwhile (counted in frame_n)
      08 W  EXIT: the code (kept as dbg_exit, bit 8 set: I_Error / exit ran)
      0c R  CYCLES: clocks since reset (low 32)        1c R  MS: milliseconds since reset
      20 R  WADSIZE: bytes of the WAD (0: none yet)
@@ -70,6 +72,8 @@ module doom_soc #(
 	output reg [7:0] pal_wa = 8'd0,
 	output reg [23:0] pal_wd = 24'd0,
 	output reg [15:0] frame_n = 16'd0,
+	output reg disp_front = 1'b0,         // the display buffer with the last whole frame
+	input wire disp_shown,                // the one the video shows (synchronised to clk)
 
 	// debug
 	output reg [7:0] dbg_uart = 8'd0,
@@ -207,12 +211,20 @@ doom_sdram #(.INIT_CLOCKS(SDRAM_INIT_CLOCKS)) sdram (
 
 wire sr_ack;
 wire [31:0] sr_dat;
+// the frame copy: asked by the FRAME write, started when the video shows the last copy (the target
+// is the other buffer); the CPU keeps off the SRAM until it is done
+localparam [20:0] FB_WORK = 21'h1f8000, FB_DISP0 = 21'h1f0000, FB_DISP1 = 21'h1e8000;
+reg copy_pend = 1'b0, copy_run = 1'b0, dma_req = 1'b0;
+wire dma_busy;
+wire sr_ok = ~cpu_reset & ~copy_pend;
 doom_sram sram (
 	.clk(clk),
-	.wb_cyc(d_req & d_sr & ~cpu_reset), .wb_stb(d_req & d_sr & ~cpu_reset), .wb_we(d_we), .wb_sel(d_sel),
+	.wb_cyc(d_req & d_sr & sr_ok), .wb_stb(d_req & d_sr & sr_ok), .wb_we(d_we), .wb_sel(d_sel),
 	.wb_adr(d_adr[19:0]), .wb_cti(d_cti), .wb_dat_i(d_dat_o), .wb_dat_o(sr_dat), .wb_ack(sr_ack),
 	.vid_req(vid_req), .vid_adr(vid_adr), .vid_len(vid_len), .vid_we(vid_we), .vid_wa(vid_wa),
 	.vid_wd(vid_wd), .vid_busy(vid_busy),
+	.dma_req(dma_req), .dma_src(FB_WORK), .dma_dst(disp_front ? FB_DISP0 : FB_DISP1), .dma_len(16'd32000),
+	.dma_busy(dma_busy),
 	.MA(MA), .MD_I(MD_I), .MD_O(MD_O), .MD_OE_N(MD_OE_N), .MWR_N(MWR_N), .MRD_N(MRD_N)
 );
 
@@ -227,6 +239,21 @@ reg [7:0] ms_btn = 8'd0;
 reg io_ack = 1'b0;
 reg [31:0] io_dat = 32'd0;
 wire [11:0] io_off = { d_adr[9:0], 2'b00 };
+
+always @(posedge clk) begin
+	dma_req <= 1'b0;
+	if (copy_pend && !copy_run && !dma_busy && !dma_req && disp_shown == disp_front) begin
+		dma_req <= 1'b1;
+		copy_run <= 1'b1;
+	end
+	if (copy_run && !dma_req && !dma_busy) begin
+		copy_run <= 1'b0;
+		copy_pend <= 1'b0;
+		disp_front <= ~disp_front;
+	end
+	if (d_req && d_io && !io_ack && !cpu_reset && d_we && io_off == 12'h004) copy_pend <= 1'b1;
+end
+
 
 function signed [11:0] sat_add(input signed [11:0] a, input [7:0] d);
 	reg signed [12:0] s;
