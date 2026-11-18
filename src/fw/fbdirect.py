@@ -14,5 +14,8 @@ s = s.replace(old, '')
 old = 'void I_FinishUpdate (void)\n{\n'
 assert s.count(old) == 1
 s = s.replace(old, old + '    DG_DrawFrame(); return;\n')
+old = 'palette_changed = true;'
+assert s.count(old) == 1
+s = s.replace(old, old + '\n    for (i = 0; i < 256; ++i) MMIO_PAL(i) = (colors[i].r << 16) | (colors[i].g << 8) | colors[i].b;')
 s = '#include "mmio.h"\n' + s
 open(dst, 'w').write(s)
