@@ -19,7 +19,7 @@
    0x1000 + 4 * i  R/W  byte i of the 512-byte sector buffer (bits 7..0)
  The buffer: 512 x 8 distributed dual-port RAM: port A writes (the CPU, or the bytes of a read
  from the MCU) and reads for the CPU, port B reads the byte of a write for the MCU (two clocks
- after sdc_byte_addr: kg_mcu2 IMG_OUT_LATENCY 2).
+ after sdc_byte_addr: with the address register of kg_l2_img that is kg_mcu2 IMG_OUT_LATENCY 3).
 */
 module doom_sd #(
 	parameter [2:0] SLOT = 3'd1

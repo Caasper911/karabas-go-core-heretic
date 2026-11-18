@@ -77,7 +77,10 @@ static uint32_t slot_max(int s) { return (s == 0 ? CFG_SECTORS : SAVE_SECTORS) *
 
 void kg_save_init(void) {
     ready = 0;
-    SD_BKREQ = FILE_SECTORS;
+    /* a restart of the CPU (Reset / F12) keeps the mount: asking again makes the firmware open the
+       file anew while the table is being read (the read failed: the saves were off after F12). A new
+       WAD closes it first (size 0), so the request comes only when nothing is mounted */
+    if (!(SD_STAT & 4)) SD_BKREQ = FILE_SECTORS;
     uint32_t t0 = MMIO_MS;
     while (!(SD_STAT & 4)) if (MMIO_MS - t0 > 2500) { printf("Saves: no save file\n"); return; }
     if (SD_SIZE < FILE_SECTORS * 512u) { printf("Saves: the save file is too small\n"); return; }
@@ -85,7 +88,10 @@ void kg_save_init(void) {
     ready = 1;
     if (!sec_read(0, b)) { printf("Saves: read error\n"); ready = 0; return; }
     if (memcmp(b, MAGIC, 8)) {
-        memset(table, 0, sizeof table);       /* a new file (zeros): an empty table */
+        /* only a new file (sector 0 all zeros) gets an empty table: anything else (a bad read, a
+           file of something else) is left as it is and the saves stay off */
+        for (int i = 0; i < 512; i++) if (b[i]) { printf("Saves: the save file is not ours, off\n"); ready = 0; return; }
+        memset(table, 0, sizeof table);
         if (!table_write()) { printf("Saves: write error\n"); ready = 0; return; }
     } else
         memcpy(table, b + 8, sizeof table);
