@@ -210,3 +210,18 @@ PAR `-t 2`: **все ограничения выполнены**, clk_sys 75 MHz
   tb_rtl: копии = кадрам бит в бит. DEBUG_DATA = { fps за последнюю секунду, кадры }.
 - PAR: 4929 LUT (32 %), 49 % слайсов, все ограничения выполнены. **На плате: 20–25 fps в игровом демо DOOM II**
   (заставки 60), как прогноз Verilator (~24).
+
+## Ф2 — звук (ветка `f2-sound`, от `f1-minig`, 2026-11-18)
+
+- `doom_audio.v`: кольцо эффектов 2048 x { R16, L16 } (CPU пишет, вывод читает на 11025 Гц), OPL3 (`opl3_fm` из
+  core-zxuno / tsconf, 49716 Гц), MIDI_TX (`kg_midi_tx`, 31250) к SAM2695, его звук назад через PCM1808
+  (`i2s_transceiver`, ADC_CLK = 25 MHz = 256 fs, x2), микшер с насыщением → PCM5102 и HDMI (48 кГц).
+- `doom_soc.v`: таймер в микросекундах + прерывание VexRiscv (timerInterrupt), регистр SW (OSD).
+- Прошивка: `kg_irq.c` / `trap.S` (прерывание таймера: микшер эффектов каждые 5 ms на ~40 ms вперёд, обратные
+  вызовы OPL, MIDI-секвенсор; ловушки → сообщение на экран), `i_kgsound.c` (DG_sound_module, lump-ы DMX из
+  отображённого WAD), `i_kgmusic.c` (DG_music_module: OPL3 = `i_oplmusic.c` chocolate-doom 2.3.0 (подмодуль,
+  без правок: `opl_kg.c` под именем `opl_sdl_driver`, `compat/SDL.h`) или MIDI-секвенсор по `midifile.c`, или
+  выкл — пункт OSD «Music»), файлы в ОЗУ в `syscalls.c` (doom.mid, default.cfg, сохранения — до сброса).
+- ISS: прерывания (CSR, mret), таймер, регистры звука, `--wav` / `--opl-log` / `--midi-log`. demo DOOM2: OPL
+  init «karabas», записи OPL идут, эффекты в кольце (пик ~10k).
+- PAR Mini G: 6802 LUT (45 %), 66 % слайсов, все ограничения выполнены.
