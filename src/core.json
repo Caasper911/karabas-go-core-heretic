@@ -1,0 +1,42 @@
+{
+    "id": "doom",
+    "name": "Doom",
+    "build": "26111801",
+    "visible": true,
+    "type": "osd",
+    "order": 40,
+    "eeprom_bank": 255,
+    "rtc_mode": 0,
+    "roms": [
+        {
+            "filename": "roms/doom.bin",
+            "address": 0
+        }
+    ],
+    "boards": {
+        "minig": {
+            "link": 2,
+            "build": "26111801",
+            "bitstream": "karabas_minig.bin"
+        }
+    },
+    "osd": [
+        {
+            "type": "FL",
+            "name": "WAD",
+            "slot": 0,
+            "extensions": ".wad",
+            "dir": "/doom",
+            "hotkey": "Menu+F1"
+        },
+        {
+            "type": "-"
+        },
+        {
+            "type": "T",
+            "name": "Reset",
+            "hotkey": "F12",
+            "index": 1
+        }
+    ]
+}
