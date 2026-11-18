@@ -1,0 +1,74 @@
+# Ф0 bench firmware: doomgeneric for rv32 (xPack riscv-none-elf-gcc), run by ../sim/iss.
+#   make [FB=direct|copy] [LAYOUT=sdram|sram] [ARCH=rv32im] [OPT=-O2] [MB=6: zone MiB] [ARGS="-timedemo demo1"]
+# FB direct: Doom draws into the SRAM frame (fbdirect.py); copy: upstream, 64 KB memcpy per frame.
+# LAYOUT sdram: program + zone in SDRAM; sram: program + zone in the 4 MB SRAM (zone must be small).
+# The doom objects are built once per ARCH / OPT in build-$(ARCH)$(OPT)/; LAYOUT / ARGS only relink.
+XPACK   ?= $(HOME)/opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin
+CROSS   := $(XPACK)/riscv-none-elf-
+ARCH    ?= rv32im
+OPT     ?= -O2
+LAYOUT  ?= sdram
+FB      ?= direct
+MB      ?= 6
+ARGS    ?= -timedemo demo1
+NAME    := doom-$(FB)-$(LAYOUT)-$(MB)
+
+DG      := ../../upstream/doomgeneric/doomgeneric
+B       := build-$(ARCH)$(subst -,,$(OPT))
+# upstream Makefile SRC_DOOM without the xlib platform and w_file_stdc (w_file_kg.c instead)
+DOOM    := dummy am_map doomdef doomstat dstrings d_event d_items d_iwad d_loop d_main d_mode d_net f_finale \
+           f_wipe g_game hu_lib hu_stuff info i_cdmus i_endoom i_joystick i_scale i_sound i_system i_timer memio \
+           m_argv m_bbox m_cheat m_config m_controls m_fixed m_menu m_misc m_random p_ceilng p_doors p_enemy \
+           p_floor p_inter p_lights p_map p_maputl p_mobj p_plats p_pspr p_saveg p_setup p_sight p_spec p_switch \
+           p_telept p_tick p_user r_bsp r_data r_draw r_main r_plane r_segs r_sky r_things sha1 sounds statdump \
+           st_lib st_stuff s_sound tables v_video wi_stuff w_checksum w_file w_main w_wad z_zone i_input i_video \
+           doomgeneric
+OBJ     := $(addprefix $(B)/,$(addsuffix .o,$(filter-out i_video,$(DOOM)))) $(B)/w_file_kg.o $(B)/i_video_$(FB).o
+ABI     := -march=$(ARCH) -mabi=ilp32
+DEFS    := -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DCMAP256 -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200
+CFLAGS  := $(ABI) $(OPT) -g -ffunction-sections -fdata-sections -w $(DEFS) -I$(DG) -I.
+LDFLAGS := $(ABI) -nostartfiles --specs=nano.specs -u _printf_float -Wl,--gc-sections
+
+ifeq ($(LAYOUT),sram)
+ORG := 0x00000000
+LEN := 0x3f0000
+else
+ORG := 0x10000000
+LEN := 0x1000000
+endif
+
+vpath %.c $(DG)
+
+all: $(B)/$(NAME).bin
+
+$(B):
+	mkdir -p $@
+$(B)/%.o: %.c | $(B)
+	$(CROSS)gcc $(CFLAGS) -c $< -o $@
+$(B)/i_video_copy.o: $(DG)/i_video.c | $(B)
+	$(CROSS)gcc $(CFLAGS) -c $< -o $@
+$(B)/i_video_direct.c: $(DG)/i_video.c fbdirect.py | $(B)
+	./fbdirect.py $< $@
+$(B)/i_video_direct.o: $(B)/i_video_direct.c mmio.h
+	$(CROSS)gcc $(CFLAGS) -c $< -o $@
+$(B)/w_file_kg.o: w_file_kg.c mmio.h | $(B)
+	$(CROSS)gcc $(CFLAGS) -I$(DG) -c $< -o $@
+
+OPTS := $(B)/opts-$(NAME)-$(subst $(eval) ,_,$(ARGS))
+$(OPTS): | $(B)
+	rm -f $(B)/opts-$(NAME)-*; touch $@
+$(B)/link-$(LAYOUT).ld: link.ld.in Makefile | $(B)
+	sed -e 's/@ORG@/$(ORG)/' -e 's/@LEN@/$(LEN)/' -e 's/@REGION@/$(LAYOUT)/' $< > $@
+$(B)/$(NAME).elf: $(OBJ) kg_main.c syscalls.c crt0.S mmio.h $(B)/link-$(LAYOUT).ld $(OPTS)
+	$(CROSS)gcc $(CFLAGS) '-DMB="$(MB)"' '-DARGS="$(ARGS)"' -c kg_main.c -o $(B)/kg_main.o
+	$(CROSS)gcc $(CFLAGS) -c syscalls.c -o $(B)/syscalls.o
+	$(CROSS)gcc $(ABI) -c crt0.S -o $(B)/crt0.o
+	$(CROSS)gcc $(LDFLAGS) -T $(B)/link-$(LAYOUT).ld -Wl,-Map,$(B)/$(NAME).map -o $@ \
+	  $(B)/crt0.o $(OBJ) $(B)/kg_main.o $(B)/syscalls.o -lm
+	$(CROSS)size $@
+$(B)/$(NAME).bin: $(B)/$(NAME).elf
+	$(CROSS)objcopy -O binary $< $@
+
+clean:
+	rm -rf build-*
+.PHONY: all clean
