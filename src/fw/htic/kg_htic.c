@@ -154,7 +154,7 @@ void NET_CL_Run(void) {}
 void NET_CL_StartGame(net_gamesettings_t *settings) { (void) settings; }
 boolean NET_CL_GetSettings(net_gamesettings_t *settings) { (void) settings; return false; }
 void NET_SV_Run(void) {}
-void DEH_Checksum(sha1_digest_t digest) { memset(digest, 0, sizeof(sha1_digest_t)); }
+__attribute__((weak)) void DEH_Checksum(sha1_digest_t digest) { memset(digest, 0, sizeof(sha1_digest_t)); }
 char *timidity_cfg_path = "";
 char *gus_patch_path = "";
 int gus_ram_kb = 1024;
