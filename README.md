@@ -12,7 +12,7 @@ Heretic for the Karabas Go board family (Xilinx Spartan-6 XC6SLX25): a VexRiscv 
 
 The core file is in `src/`. It contains no game data: put your own `HERETIC.WAD` (registered) or the shareware `HERETIC1.WAD` on the SD card.
 
-Status: checked in the simulator only (shareware HERETIC1.WAD 1.2: play, effects, OPL3 and MIDI music, saves); not run on a board yet.
+Status: works on Mini G (shareware HERETIC1.WAD 1.2); in the simulator also checked: effects, OPL3 and MIDI music, saves. The Go and Mini builds have not been run on a board yet.
 
 ## Features
 
