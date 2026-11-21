@@ -48,6 +48,38 @@
 
 **Итог Ф0: GO.** Железо Doom как есть. Дальше Ф1: прошивка Heretic для платы (`kg_hw`, ввод, звук, сохранения), свой .kg.
 
+## Ф1 — прошивка Heretic для платы (ветка `f1-fw`)
+
+RTL и битстримы Doom (26111822) без изменений: .kg = те же битстримы + своя ROM.
+1. `make -C src/fw htic-hw`: `htic/kg_htic_hw.c` — ожидание WAD, ввод (USB-отчёт, мышь, оба геймпада → события
+   chocolate в `I_StartTic`), лог на экран при выходе; видео / таймер — общие с `kg_htic.c`. Звук: `i_sound.c`
+   chocolate с `FEATURE_SOUND`, модули `sound_sdl_module` / `music_sdl_module` = `i_kgsound.c` / `i_kgmusic.c`
+   (сдвиг высоты звуков Heretic, `snd_pitchshift`), OPL — `i_oplmusic.c` + `opl_kg.c`, MIDI — SAM2695.
+2. Клавиши: по умолчанию Heretic (инвентарь `[` `]` Enter, полёт PgUp / Ins / Home, обзор PgDn / Del / End);
+   OSD Controls / Mouse move как в Doom. Геймпад: A огонь, B use, C бег, Start Enter (артефакт / меню),
+   X Esc, Y / Z инвентарь вправо / влево, Mode — следующее оружие.
+3. Сохранения (`kg_save.c`, `KG_HERETIC`): файл 1 MB, сектор 0 — таблица `KGHTICS1`, `heretic.cfg` и
+   `chocolate-heretic.cfg` по 16 секторов, 6 слотов `hticsav%d.hsg` по 335 секторов (171 520 байт; предел vanilla 196 608).
+4. ISS: старт, новая игра с клавиш, WAV эффектов, лог OPL, сохранение / загрузка через `--sd`.
+5. `roms/heretic.bin`, `core.json` (id `heretic`, каталог `/heretic`), `heretic.kg`. Затем плата Mini G (с вопросом).
+
+### Результаты Ф1 в ISS (2026-11-21)
+
+- `make -C src/fw htic-hw` → ROM 471 KB; `make -C src rom kg` → `src/heretic.kg` (битстримы 26111822 из git, ISE не нужен;
+  `doom.kg` и `roms/doom.bin` убраны). Прошивка Doom (`make hw`) по-прежнему собирается.
+- ISS с прошивкой платы (HERETIC1.WAD): ожидание WAD → старт, «Saves: on the SD card»; Esc → New Game → эпизод →
+  сложность → E1M1 (кадры); эффекты в WAV, OPL (`--music 0`) и MIDI (`--music 1`) пишутся.
+- Сохранение F2 → слот 0 → имя «ab» → «game saved»: слот `hticsav0.hsg` 47 796 байт; новый запуск → F3 → слот «ab» →
+  игра загружена. Выход из меню (Quit → Y): `heretic.cfg` 1 536 и `chocolate-heretic.cfg` 2 744 байт на SD.
+- Найдено и исправлено:
+  - `syscalls.c`: меню загрузки Heretic открывает сохранения как `"rb+"`; `_open` считал это записью — пустой новый
+    файл, а при закрытии слот на SD затирался. Теперь сохранённый файл подгружается при любом режиме, без `O_CREAT`
+    отсутствующий файл не создаётся, флаг записи — только при записи / усечении.
+  - `chat_macros[]` Heretic 2.3.0 никто не заполняет (NULL), `M_SaveDefaults` печатает их через `%s`: glibc пишет
+    `(null)`, newlib-nano читает память с адреса 0 — `heretic.cfg` выходил 1 MB. Заполняются пустыми строками до старта.
+- Windows: msys make не передаёт программам `TMP` / `LOCALAPPDATA` / `USERPROFILE` (менеджер Python ставил среду в текущий каталог) — Makefile экспортируют их; `make_core.py` (симлинк в git)
+  на Windows — текстовый файл с путём, `src/Makefile` берёт путь из него.
+
 ---
 
 # История: Doom (karabas-go-core-doom)
