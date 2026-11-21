@@ -80,6 +80,25 @@ RTL и битстримы Doom (26111822) без изменений: .kg = те 
 - Windows: msys make не передаёт программам `TMP` / `LOCALAPPDATA` / `USERPROFILE` (менеджер Python ставил среду в текущий каталог) — Makefile экспортируют их; `make_core.py` (симлинк в git)
   на Windows — текстовый файл с путём, `src/Makefile` берёт путь из него.
 
+## Разведка: Hexen и Strife — одно ядро на все игры chocolate? (2026-11-21)
+
+Пробные сборки стенда (платформа `htic/`, вне репо: `C:/hobby/scratch-games/g.mk`, заглушки HR / CD / dirent).
+WAD-ы локально: `~/Downloads/hexen-demo/HEXEN.WAD` (демо 1.0, 4 карты, 10 644 136 байт, md5 876a5a44…),
+`~/Downloads/strife-demo/STRIFE0.WAD` (демо 1.1, md5 bb545b9c…, из idgames `roguestuff/strife11.zip`).
+
+- **Hexen** (код 624 KB, нужен `-fcommon`; экран старта 640x480 и CD — заглушки, старт текстовый): рисуется верно.
+  `-timedemo demo1`: **1.79 млн инструкций на кадр** (Heretic 1.26), промахов 34.7 / 1000 (Heretic 21.6); невыровненных 0.
+  Профиль: `R_DrawColumn` 36 %, `R_DrawSpan` 21 %, `R_RenderSegLoop` 7 %, `R_MapPlane` 4 %, `R_DrawTLColumn` 1.4 %.
+  `model.py` при 75 MHz (среднее / p95): 4K/4K **16.9 / 12.1**, 8K/8K 20.4 / 14.7, 16K/16K 22.4 / 16.3 —
+  порог 20 только с большими кэшами (новый вариант VexRiscv: SpinalHDL, sbt + Java) или ускорением рисования.
+  Zone 8 MB хватило на demo1. Сохранения: на слот файл + файл на каждую карту хаба, слоты база / возрождение
+  копируются целиком — нужна файловая система в файле сохранений и файл больше 1 MB.
+- **Strife** (код 502 KB, dehacked обязателен): chocolate-strife 2.3.0 не поддерживает демо STRIFE0.WAD (считает
+  WAD полной версией: заставка требует STARTUP0, без неё `-nograph` — `GLASS09 not found`). Замер — только на
+  STRIFE1.WAD (коммерческий). В STRIFE0.WAD 1498 невыровненных lump-ов (VexRiscv ловит невыровненные обращения:
+  такие lump-ы надо копировать в zone); syscalls отвечает «есть» на любой `.wad` — Strife добавил бы тот же WAD как
+  `voices.wad`. Сохранения — каталоги (`opendir` / `readdir`), служебный каталог переписывается при каждой смене карты.
+
 ---
 
 # История: Doom (karabas-go-core-doom)
