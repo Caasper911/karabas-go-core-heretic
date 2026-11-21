@@ -1,4 +1,27 @@
-# Doom для Karabas Go / Mini / Mini G — план
+# Heretic для Karabas Go / Mini / Mini G — план
+
+Репо создано 2026-11-21 клоном karabas-go-core-doom (история с bd8f2f5). Ниже — план Heretic, под ним — история Doom.
+
+## Обзор (2026-11-21)
+
+- RTL ядра Doom подходит как есть: 320x200x8 с палитрой, DMA кадра, звук DMX, музыка MUS (GENMIDI есть в WAD).
+- Исходники: `upstream/chocolate-doom/src/heretic` (2.3.0) + общие файлы `src/` chocolate (не doomgeneric: в нём только Doom).
+  Нужен свой `i_video` (кадр прямо в SRAM, как `fbdirect.py`), `compat/SDL.h` шире.
+- Своя ROM и свой `heretic.kg` (имена функций Doom / Heretic совпадают), каталог `/heretic`.
+- Клавиши: инвентарь `[` / `]` / Enter, полёт PgUp / Ins / Home, обзор PgDn / Del / End; кнопки геймпада.
+- Сохранения: `hticsav%d.hsg`, `heretic.cfg`; `SAVEGAMESIZE` 192 KB (384 сектора) > слота 338 — пересчитать раскладку.
+- Ожидание ~18–24 fps (лишнее: `R_DrawTLColumn`, детальнее уровни) — замерить.
+- Тестовый WAD: шареварный HERETIC1.WAD 1.2 (5 120 920 байт) в `~/Downloads/heretic-sw`.
+
+## Ф0 — замер (go / no-go), без платы
+
+1. Heretic под rv32im (`src/fw`, своя цель Makefile), WAD в памяти, кадр в SRAM.
+2. ISS: `-timedemo demo1` на HERETIC1.WAD, кадры в картинки (проверка вида), профиль, невыровненные обращения.
+3. `model.py`: fps при 75 MHz, 4K / 4K. Порог — 20 fps в среднем, как у Doom.
+
+---
+
+# История: Doom (karabas-go-core-doom)
 
 ## Исходные данные (обзор 2026-11-18)
 
